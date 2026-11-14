@@ -1,0 +1,135 @@
+name: Skills validation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  documentation:
+    name: 01 Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate required files
+        shell: bash
+        run: |
+          test -f README.md
+          test -f CHANGELOG.md
+          test -f templates/SKILL_TEMPLATE.md
+          test -f templates/BENCHMARK_TEMPLATE.md
+          test -f templates/DECISION_TEMPLATE.md
+          test -f skills/README.md
+
+  schema:
+    name: 02 Schema and metadata
+    runs-on: ubuntu-latest
+    needs: documentation
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate YAML and JSON when present
+        shell: bash
+        run: |
+          json_files=()
+          yaml_files=()
+          while IFS= read -r -d '' path; do json_files+=("$path"); done < <(find . -type f -name '*.json' -print0)
+          while IFS= read -r -d '' path; do yaml_files+=("$path"); done < <(find . -type f \( -name '*.yml' -o -name '*.yaml' \) -print0)
+          if [ "${#json_files[@]}" -gt 0 ]; then
+            python -c 'import json, sys; [json.load(open(path)) for path in sys.argv[1:]]' "${json_files[@]}"
+          fi
+          if [ "${#yaml_files[@]}" -gt 0 ]; then
+            ruby -e 'require "yaml"; ARGV.each { |path| YAML.load_file(path) }' "${yaml_files[@]}"
+          fi
+          echo "metadata syntax ok"
+
+  examples:
+    name: 03 Examples
+    runs-on: ubuntu-latest
+    needs: schema
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Python syntax
+        shell: bash
+        run: |
+          dirs=()
+          for dir in examples scripts tests; do
+            if [ -d "$dir" ]; then
+              dirs+=("$dir")
+            fi
+          done
+          if [ "${#dirs[@]}" -gt 0 ]; then
+            python -m compileall -q "${dirs[@]}"
+          else
+            echo "No Python example or test directories yet"
+          fi
+
+  correctness:
+    name: 04 Correctness
+    runs-on: ubuntu-latest
+    needs: examples
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require correctness contract
+        shell: bash
+        run: |
+          grep -q "checksum" templates/BENCHMARK_TEMPLATE.md
+          grep -q "correctness" templates/BENCHMARK_TEMPLATE.md
+          grep -q "row_count" README.md
+
+  benchmark:
+    name: 05 Benchmark contract
+    runs-on: ubuntu-latest
+    needs: correctness
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require benchmark metrics
+        shell: bash
+        run: |
+          for metric in duration shuffle spill gc cost; do
+            grep -qi "$metric" templates/BENCHMARK_TEMPLATE.md
+          done
+
+  performance:
+    name: 06 Performance contract
+    runs-on: ubuntu-latest
+    needs: benchmark
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require performance guardrails
+        shell: bash
+        run: |
+          grep -q "duration_delta" templates/SKILL_TEMPLATE.md
+          grep -q "p99_delta" templates/SKILL_TEMPLATE.md
+          grep -q "spill_delta" templates/SKILL_TEMPLATE.md
+
+  infrastructure:
+    name: 07 Infrastructure
+    runs-on: ubuntu-latest
+    needs: benchmark
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Terraform when present
+        shell: bash
+        run: |
+          if find . -name '*.tf' -print -quit | grep -q .; then
+            terraform fmt -check -recursive
+            terraform init -backend=false
+            terraform validate
+          else
+            echo "No Terraform configuration yet"
+          fi
+
+  regression-gate:
+    name: 08 Regression gate
+    runs-on: ubuntu-latest
+    needs: [performance, infrastructure]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate decision policy
+        shell: bash
+        run: |
+          grep -q "accept" templates/DECISION_TEMPLATE.md
+          grep -q "reject" templates/DECISION_TEMPLATE.md
+          grep -q "inconclusive" templates/DECISION_TEMPLATE.md
+          grep -q "correctness == true" docs/ci-validation-tree.md
