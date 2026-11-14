@@ -21,8 +21,9 @@ grep -q "correctness" docs/engineering-loop.md
 grep -q "PullRequest" docs/engineering-loop.md
 test -f pyproject.toml
 test -f src/spark_tuning/engine.py
-PYTHONPATH=src python -m compileall -q src tests
-PYTHONPATH=src python -m unittest discover -s tests -q
+PYTHON_BIN="${PYTHON:-python3}"
+PYTHONPATH=src "$PYTHON_BIN" -m compileall -q src tests
+PYTHONPATH=src "$PYTHON_BIN" -m unittest discover -s tests -q
 
 git diff --check
 echo "loop contract valid"

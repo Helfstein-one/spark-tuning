@@ -1,159 +1,50 @@
-# Arquitetura exagonal do Spark Tuning
+"""Architecture specification for spark-tuning."""
 
-## 1. Objetivo arquitetural
+# Arquitetura Granular do Spark Tuning
 
-O núcleo de decisão não deve depender de Spark, AWS, Databricks, Terraform ou de uma ferramenta de observabilidade específica. Essas tecnologias são adaptadores externos.
+O sistema é organizado modularmente por domínio funcional, desacoplando o motor central das integrações específicas de cluster, storage e diagnósticos.
 
-O domínio recebe sinais normalizados, formula hipóteses, seleciona experimentos e decide com base em evidências.
-
-```text
-                         Adaptadores externos
- ┌─────────────────────────────────────────────────────────────┐
- │ Spark UI │ sparkMeasure │ Cloud metrics │ Terraform │ APIs   │
- └──────────┬────────────┬────────────────┬───────────┬────────┘
-            │            │                │           │
-            ▼            ▼                ▼           ▼
-       Inbound adapters / collectors / parsers
-                         │
-                         ▼
-              ┌────────────────────────┐
-              │       PORTAS           │
-              │ metrics, plans, cost,  │
-              │ quality, lineage, run  │
-              └────────────┬───────────┘
-                           │
-                           ▼
-              ┌────────────────────────┐
-              │       DOMÍNIO           │
-              │ diagnosis               │
-              │ hypothesis              │
-              │ experiment              │
-              │ decision                │
-              │ learning                │
-              └────────────┬───────────┘
-                           │
-                           ▼
-              ┌────────────────────────┐
-              │ PORTAS DE SAÍDA         │
-              │ benchmark runner        │
-              │ config applier          │
-              │ report writer           │
-              │ regression gate         │
-              └────────────┬───────────┘
-                           │
-                           ▼
-                Spark / cloud / storage / CI
-```
-
-## 2. Camadas
-
-### Domínio
-
-Regras puras e independentes de infraestrutura:
-
-- classificação de gargalo;
-- severidade;
-- confiança;
-- formulação de hipótese;
-- seleção de experimento;
-- cálculo de delta;
-- critérios de aceitação;
-- decisão e rollback;
-- aprendizado de evidências anteriores.
-
-### Aplicação
-
-Orquestra casos de uso:
-
-- `CreateBaseline`;
-- `DiagnoseWorkload`;
-- `GenerateHypotheses`;
-- `RunExperiment`;
-- `CompareRuns`;
-- `ValidateCorrectness`;
-- `EvaluateDecision`;
-- `PublishEvidence`.
-
-### Portas
-
-Contratos abstratos:
-
-- `MetricsReader`;
-- `PlanReader`;
-- `CostReader`;
-- `QualityChecker`;
-- `LineageWriter`;
-- `BenchmarkRunner`;
-- `ConfigurationProvider`;
-- `ArtifactStore`;
-- `DecisionRepository`.
-
-### Adaptadores
-
-Implementações concretas:
-
-- Spark event log;
-- SparkMeasure;
-- Spark SQL UI export;
-- AWS CloudWatch/Glue/EMR;
-- Google Cloud Monitoring/Dataproc;
-- Azure Monitor/Databricks/Synapse;
-- Prometheus;
-- Terraform;
-- Parquet/Delta/Iceberg;
-- GitHub Actions.
-
-## 3. Estrutura de pastas
+## Árvore de Diretórios
 
 ```text
-src/
-├── domain/
-│   ├── entities/
-│   │   ├── workload.py
-│   │   ├── run.py
-│   │   ├── hypothesis.py
-│   │   ├── diagnosis.py
-│   │   └── decision.py
-│   ├── value_objects/
-│   │   ├── metric.py
-│   │   ├── threshold.py
-│   │   ├── confidence.py
-│   │   └── fingerprint.py
-│   ├── services/
-│   │   ├── bottleneck_classifier.py
-│   │   ├── hypothesis_generator.py
-│   │   ├── experiment_selector.py
-│   │   └── decision_evaluator.py
-│   └── rules/
-│       ├── correctness_rules.py
-│       ├── performance_rules.py
-│       └── safety_rules.py
-├── application/
-│   ├── use_cases/
-│   ├── commands/
-│   └── dto/
-├── ports/
-│   ├── inbound/
-│   └── outbound/
-└── adapters/
-    ├── inbound/
-    │   ├── cli/
-    │   ├── ci/
-    │   └── api/
-    └── outbound/
-        ├── spark/
-        ├── cloud/
-        ├── storage/
-        ├── observability/
-        └── terraform/
+src/spark_tuning/
+├── __init__.py               # Fachada pública e retrocompatibilidade
+├── cli.py                   # Interface de linha de comando
+├── engine.py                # Orquestrador do loop O-C-H-E-M-V-D-L
+├── core/                    # Modelos de domínio, entidades e contratos fundamentais
+│   └── __init__.py          # Metrics, RunSpec, RunState, Decision, Iteration
+├── diagnostics/             # Classificação automática de gargalos (Issue #2)
+│   └── __init__.py          # Skew, spill, GC, shuffle, I/O, CPU
+├── evaluation/              # Guardrails, deltas e verificação estatística
+│   └── __init__.py          # Evaluation, evaluate, pareto
+├── runners/                 # Executores de workload e telemetria (Issue #1)
+│   └── __init__.py          # SparkSubmit, FixtureRunner, EventLogParser
+├── reporting/               # Relatórios explicáveis e dashboards
+│   └── __init__.py          # Markdown, JSON, antes/depois
+├── drift/                   # Detecção de deriva de dados e workload
+│   └── __init__.py          # Schema, cardinalidade, drift
+└── safety/                  # Mudanças isoladas, rollback e guardrails de branch
+    └── __init__.py          # Git adapter, allowlist, rollback
+
+tests/
+├── fixtures/                # Amostras determinísticas de event logs e datasets
+├── unit/                    # Testes isolados por domínio funcional
+│   ├── core/
+│   ├── diagnostics/
+│   ├── evaluation/
+│   ├── runners/
+│   ├── reporting/
+│   ├── drift/
+│   └── safety/
+└── integration/             # Testes de loop ponta-a-ponta (E2E)
 ```
 
-## 4. Invariantes
+## Responsabilidades dos Módulos
 
-- o domínio não importa SDK de cloud;
-- um adaptador não decide aceitação sozinho;
-- toda decisão referencia baseline e candidate;
-- toda recomendação possui hipótese e rollback;
-- toda melhoria de performance passa por correção;
-- ausência de métrica é `unknown`, nunca `zero`;
-- falha de coleta é erro explícito, nunca sucesso vazio.
+1. **`core`**: Define a verdade única dos tipos de dados (`Metrics`, `RunSpec`, `RunState`, `Decision`).
+2. **`diagnostics`**: Analisa planos e métricas para apontar causas primárias e secundárias com índice de confiança.
+3. **`evaluation`**: Aplica guardrails de regressão (`duration`, `p95`, `spill`), multiobjetivo Pareto e gates de qualidade.
+4. **`runners`**: Abstrai a execução física (`spark-submit`, cloud adapters) e parser de telemetria sem perda de fidelidade.
+5. **`safety`**: Garante que nenhuma mudança quebre produção ou polua a branch `main`, permitindo rollback atômico.
+6. **`drift`**: Garante que uma otimização continue válida frente a variações no volume ou perfil de distribuição.
+7. **`reporting`**: Produz artefatos explicáveis com contexto de negócios e FinOps.

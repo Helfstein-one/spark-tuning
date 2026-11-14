@@ -11,7 +11,9 @@ class Evaluation:
     reason: str
 
 
-def _delta(candidate: float, baseline: float) -> float:
+def _delta(candidate: float | None, baseline: float | None) -> float:
+    if candidate is None or baseline is None:
+        return 0.0
     if baseline == 0:
         return 0.0 if candidate == 0 else float("inf")
     return (candidate - baseline) / baseline
