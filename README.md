@@ -10,35 +10,7 @@ Repositório, framework e playbook de engenharia para descobrir, diagnosticar, t
 
 O núcleo de decisão opera em um ciclo cognitivo de 8 estágios com **Early Falsification Gate**, **Fronteira de Pareto Multi-Objetivo** e **Memória de Experimentos**:
 
-```mermaid
-flowchart TD
-    subgraph Observacao ["1. Observabilidade & Diagnóstico"]
-        O["Observe (Métricas, Event Logs & DAGs)"] --> C["Classify (Gargalo Primário & Secundário)"]
-        C --> H["Hypothesize (Proposta com Mecanismo Físico)"]
-    end
-
-    subgraph GatesPre ["2. Pré-Validação de Segurança"]
-        H --> HGate{"H-Gate (Viabilidade Física & Allowlist)"}
-        HGate -- Inviável / Rejeitada Antes --> L["Learn (Atualiza Registro de Memória)"]
-        HGate -- Viável --> E["Experiment (Execução Isolada & Sandbox)"]
-    end
-
-    subgraph Execucao ["3. Medição & Verificação"]
-        E --> M["Measure (Telemetria, GC, Shuffle & Spill)"]
-        M --> V["Verify (Corretude: checksum, row_count & Schema)"]
-    end
-
-    subgraph Decisao ["4. Decisão Multidimensional"]
-        V --> D{"Decide (Pareto Frontier & Guardrails)"}
-        D -- Inconclusivo / Alto CV --> E
-        D -- Falha / Regressão --> R["Rollback (Restauração Atômica de Baseline)"]
-        R --> L
-        D -- Aprovado Dominante --> P["PR Ready (Pull Request com Evidências)"]
-        P --> L
-    end
-
-    L --> O
-```
+![Diagrama Padrão Cognitivo O-C-H-E-M-V-D-L](docs/assets/cognitive-loop.svg)
 
 ### Detalhamento das Fases do Padrão Cognitivo:
 
