@@ -6,6 +6,10 @@ Todas as mudanças relevantes deste playbook devem ser registradas aqui.
 
 ### Added
 
+- engine executável de loop com estados, hipóteses, guardrails e artefatos JSON;
+- CLI e fixture determinística para validar iterações no CI;
+- skills iniciais de join, particionamento, Parquet, fronteiras PySpark, JVM/GC e qualidade;
+- testes automatizados para aceitação, rollback e persistência;
 - skills complementares de lineage, telemetria, qualidade, contexto, resiliência e análise estática;
 - matriz de integração com OpenLineage, DataHub, Marquez, OpenTelemetry, Chaos Monkey e Ruff;
 - contrato de evento correlacionando run, inputs, outputs, métricas e decisão;

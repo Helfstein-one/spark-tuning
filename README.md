@@ -21,6 +21,8 @@ OBSERVE -> CLASSIFY -> HYPOTHESIZE -> EXPERIMENT
  LEARN <- DECIDE <- VERIFY <- MEASURE
 ```
 
+O loop executável está em `src/spark_tuning`. Ele pode usar fixtures determinísticas no CI e, depois, adaptadores reais de Spark event logs, SparkMeasure e cloud metrics.
+
 ## Início rápido
 
 ### 1. Escolha uma skill
@@ -66,6 +68,16 @@ A PR só pode ser aberta depois de:
 - thresholds de performance aprovados;
 - rollback documentado;
 - nenhum arquivo estável alterado fora do escopo.
+
+### Executar o loop local
+
+```bash
+PYTHONPATH=src python -m spark_tuning.cli run \
+  examples/runs/demo.json \
+  --artifacts artifacts/runs
+```
+
+O comando percorre hipóteses em ordem, persiste cada iteração, para na primeira candidate aceita e retorna código diferente de zero quando fica bloqueado ou sem evidência suficiente.
 
 ## Documentação por responsabilidade
 

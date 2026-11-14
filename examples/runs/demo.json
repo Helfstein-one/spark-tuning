@@ -1,0 +1,45 @@
+{
+  "run_id": "demo-join-strategy",
+  "skill": "join-strategy",
+  "objective": "reduce shuffle and duration without changing output",
+  "baseline": {
+    "duration_seconds": 1000,
+    "cost_usd": 10,
+    "shuffle_write_bytes": 1000000000,
+    "spill_disk_bytes": 500000000,
+    "gc_seconds": 40,
+    "task_p95_seconds": 100,
+    "failures": 0,
+    "correctness": true
+  },
+  "max_iterations": 3,
+  "max_total_cost_usd": 40,
+  "hypotheses": [
+    {
+      "id": "broadcast-dimension",
+      "metrics": {
+        "duration_seconds": 1120,
+        "cost_usd": 11,
+        "shuffle_write_bytes": 300000000,
+        "spill_disk_bytes": 100000000,
+        "gc_seconds": 30,
+        "task_p95_seconds": 105,
+        "failures": 0,
+        "correctness": true
+      }
+    },
+    {
+      "id": "repartition-by-key",
+      "metrics": {
+        "duration_seconds": 850,
+        "cost_usd": 8,
+        "shuffle_write_bytes": 600000000,
+        "spill_disk_bytes": 250000000,
+        "gc_seconds": 25,
+        "task_p95_seconds": 105,
+        "failures": 0,
+        "correctness": true
+      }
+    }
+  ]
+}
