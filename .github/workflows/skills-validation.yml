@@ -21,6 +21,13 @@ jobs:
           test -f templates/BENCHMARK_TEMPLATE.md
           test -f templates/DECISION_TEMPLATE.md
           test -f skills/README.md
+          test -f docs/engineering-loop.md
+          test -f docs/pr-safety.md
+          test -f docs/skill-lifecycle.md
+          test -f templates/LOOP_RUN_TEMPLATE.md
+          test -f scripts/validate_loop.sh
+      - name: Validate loop contract
+        run: bash scripts/validate_loop.sh
 
   schema:
     name: 02 Schema and metadata
