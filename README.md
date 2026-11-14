@@ -1,5 +1,7 @@
 # Spark Tuning
 
+![Spark Tuning Hero Banner](docs/assets/spark-hero.jpg)
+
 Playbook e engine seguro para descobrir, testar e promover otimizações de Apache Spark sem alterar diretamente o código estável.
 
 ## O que este projeto faz
