@@ -121,9 +121,11 @@ O engine pode experimentar em branch temporária, mas não pode:
 - abrir PR com gate vermelho;
 - misturar mudanças de código, infraestrutura e tuning sem hipótese explícita.
 
-## Baseline
+## Baseline e Validação de Correção
 
 Para workloads tabulares distribuídos, o baseline padrão é pandas API on Spark, sucessora de Koalas. Para outros domínios, use a referência definida em [`skills/README.md`](skills/README.md).
+
+Toda validação de hipótese exige aferição estrita de correção via contrato de `row_count`, checksum e integridade de schema.
 
 ## Licença e contribuição
 
