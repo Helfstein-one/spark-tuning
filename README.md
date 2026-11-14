@@ -31,22 +31,7 @@ O núcleo de decisão opera em um ciclo cognitivo de 8 estágios com **Early Fal
 
 O framework aborda 6 dimensões fundamentais de engenharia de dados em grande escala:
 
-```mermaid
-graph LR
-    A["Spark Optimization Matrix"] --> B["Compute & Data Skew"]
-    A --> C["Memory & JVM GC"]
-    A --> D["Storage & I/O Layout"]
-    A --> E["Network & Shuffle"]
-    A --> F["Execution Boundaries"]
-    A --> G["FinOps & Concorrência"]
-
-    B --> B1["Salting, Skew Join Hints & Adaptive Query Execution (AQE)"]
-    C --> C1["Off-heap storage, G1GC tuning & Kryo serialization"]
-    D --> D1["Parquet compression (ZSTD), bloom filters & predicate pushdown"]
-    E --> E1["Broadcast hash join threshold & shuffle partition sizing"]
-    F --> F1["Eliminação de Python UDFs, Arrow vectorization & pandas API on Spark"]
-    G --> G1["Fair scheduler pools, Spot interruption tolerance & budget guardrails"]
-```
+![Matriz de Abordagens de Tuning Spark](docs/assets/tuning-matrix.svg)
 
 1. **Particionamento e Shuffling:** Dimensionamento dinâmico de partições para evitar tarefas microscópicas (< 100MB) ou partição gigante com spill em disco.
 2. **Estratégias de Junção:** Conversão segura de SortMergeJoin em BroadcastHashJoin com pré-validação de volume de memória no Driver/Executors.
