@@ -1,0 +1,171 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 680" width="100%" height="100%" style="background:#090d16; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bg-matrix-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a0f1d"/>
+      <stop offset="100%" stop-color="#050811"/>
+    </linearGradient>
+
+    <!-- Card Background Gradient -->
+    <linearGradient id="card-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+
+    <!-- Center Core Hub Gradient -->
+    <linearGradient id="core-hub-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f97316"/>
+      <stop offset="50%" stop-color="#ea580c"/>
+      <stop offset="100%" stop-color="#c2410c"/>
+    </linearGradient>
+
+    <!-- Category Accents -->
+    <linearGradient id="grad-orange" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#fb923c"/>
+    </linearGradient>
+    <linearGradient id="grad-cyan" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#38bdf8"/>
+    </linearGradient>
+    <linearGradient id="grad-purple" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#a855f7"/>
+      <stop offset="100%" stop-color="#c084fc"/>
+    </linearGradient>
+    <linearGradient id="grad-green" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#34d399"/>
+    </linearGradient>
+    <linearGradient id="grad-yellow" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#eab308"/>
+      <stop offset="100%" stop-color="#facc15"/>
+    </linearGradient>
+    <linearGradient id="grad-blue" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#60a5fa"/>
+    </linearGradient>
+
+    <!-- Filter Glow -->
+    <filter id="glow-core" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+
+    <!-- Markers -->
+    <marker id="dot-orange" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6">
+      <circle cx="5" cy="5" r="3" fill="#f97316"/>
+    </marker>
+    <marker id="dot-cyan" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6">
+      <circle cx="5" cy="5" r="3" fill="#38bdf8"/>
+    </marker>
+  </defs>
+
+  <!-- Background Grid -->
+  <rect width="100%" height="100%" fill="url(#bg-matrix-grad)"/>
+  <g opacity="0.05">
+    <path d="M 0 70 L 1200 70 M 0 140 L 1200 140 M 0 210 L 1200 210 M 0 280 L 1200 280 M 0 350 L 1200 350 M 0 420 L 1200 420 M 0 490 L 1200 490 M 0 560 L 1200 560 M 0 630 L 1200 630" stroke="#38bdf8" stroke-width="1"/>
+    <path d="M 100 0 L 100 680 M 200 0 L 200 680 M 300 0 L 300 680 M 400 0 L 400 680 M 500 0 L 500 680 M 600 0 L 600 680 M 700 0 L 700 680 M 800 0 L 800 680 M 900 0 L 900 680 M 1000 0 L 1000 680 M 1100 0 L 1100 680" stroke="#38bdf8" stroke-width="1"/>
+  </g>
+
+  <!-- Title Header -->
+  <text x="600" y="45" text-anchor="middle" font-size="22" font-weight="800" fill="#f8fafc" letter-spacing="2">
+    MATRIZ DE ABORDAGENS DE TUNING SPARK
+  </text>
+  <text x="600" y="70" text-anchor="middle" font-size="13" font-weight="400" fill="#94a3b8">
+    As 6 Dimensões Fundamentais de Engenharia de Dados em Larga Escala
+  </text>
+
+  <!-- Central Hub: SPARK OPTIMIZATION CORE -->
+  <g transform="translate(480, 290)">
+    <rect width="240" height="95" rx="16" fill="url(#core-hub-grad)" filter="url(#glow-core)"/>
+    <rect width="240" height="95" rx="16" fill="url(#core-hub-grad)" stroke="#fed7aa" stroke-width="1.5"/>
+    <text x="120" y="38" text-anchor="middle" font-size="11" font-weight="800" fill="#ffedd5" letter-spacing="1.5">CORE ENGINE</text>
+    <text x="120" y="62" text-anchor="middle" font-size="16" font-weight="800" fill="#ffffff">SPARK OPTIMIZATION</text>
+    <text x="120" y="80" text-anchor="middle" font-size="11" font-weight="600" fill="#fed7aa">6 Dimensões Físicas</text>
+  </g>
+
+  <!-- Dynamic Network Connection Vectors from Center Hub -->
+  <!-- Top Left: Compute & Data Skew -->
+  <path d="M 480 320 C 350 320, 300 170, 360 170" fill="none" stroke="#f97316" stroke-width="2" stroke-dasharray="4 4"/>
+  <!-- Top Center: Memory & JVM GC -->
+  <path d="M 600 290 L 600 220" fill="none" stroke="#06b6d4" stroke-width="2" stroke-dasharray="4 4"/>
+  <!-- Top Right: Storage & I/O -->
+  <path d="M 720 320 C 850 320, 900 170, 840 170" fill="none" stroke="#10b981" stroke-width="2" stroke-dasharray="4 4"/>
+  <!-- Bottom Left: Execution Boundaries -->
+  <path d="M 480 355 C 350 355, 300 500, 360 500" fill="none" stroke="#a855f7" stroke-width="2" stroke-dasharray="4 4"/>
+  <!-- Bottom Center: Network & Shuffle -->
+  <path d="M 600 385 L 600 455" fill="none" stroke="#3b82f6" stroke-width="2" stroke-dasharray="4 4"/>
+  <!-- Bottom Right: FinOps & Concorrência -->
+  <path d="M 720 355 C 850 355, 900 500, 840 500" fill="none" stroke="#eab308" stroke-width="2" stroke-dasharray="4 4"/>
+
+  <!-- CARD 1: Compute & Data Skew (Top-Left) -->
+  <g transform="translate(60, 110)">
+    <rect width="320" height="120" rx="12" fill="url(#card-grad)" stroke="#f97316" stroke-width="1.5"/>
+    <rect x="0" y="0" width="320" height="4" rx="2" fill="url(#grad-orange)"/>
+    <text x="18" y="28" font-size="11" font-weight="700" fill="#f97316" letter-spacing="1">DIMENSÃO 1</text>
+    <text x="18" y="52" font-size="16" font-weight="700" fill="#ffffff">Compute &amp; Data Skew</text>
+    <text x="18" y="74" font-size="12" fill="#cbd5e1">• Salting em chaves desbalanceadas</text>
+    <text x="18" y="92" font-size="12" fill="#cbd5e1">• Adaptive Query Execution (AQE Skew Join)</text>
+    <text x="18" y="110" font-size="12" fill="#94a3b8">• Eliminação de tarefas zumbis (p95 &gt; 3x média)</text>
+  </g>
+
+  <!-- CARD 2: Memory & JVM GC (Top-Center) -->
+  <g transform="translate(440, 95)">
+    <rect width="320" height="120" rx="12" fill="url(#card-grad)" stroke="#06b6d4" stroke-width="1.5"/>
+    <rect x="0" y="0" width="320" height="4" rx="2" fill="url(#grad-cyan)"/>
+    <text x="18" y="28" font-size="11" font-weight="700" fill="#06b6d4" letter-spacing="1">DIMENSÃO 2</text>
+    <text x="18" y="52" font-size="16" font-weight="700" fill="#ffffff">Memory &amp; JVM GC</text>
+    <text x="18" y="74" font-size="12" fill="#cbd5e1">• Off-heap storage &amp; Heap headroom</text>
+    <text x="18" y="92" font-size="12" fill="#cbd5e1">• Serialização compacta com Kryo</text>
+    <text x="18" y="110" font-size="12" fill="#94a3b8">• G1GC tuning (-90% de tempo em GC pause)</text>
+  </g>
+
+  <!-- CARD 3: Storage & I/O Layout (Top-Right) -->
+  <g transform="translate(820, 110)">
+    <rect width="320" height="120" rx="12" fill="url(#card-grad)" stroke="#10b981" stroke-width="1.5"/>
+    <rect x="0" y="0" width="320" height="4" rx="2" fill="url(#grad-green)"/>
+    <text x="18" y="28" font-size="11" font-weight="700" fill="#10b981" letter-spacing="1">DIMENSÃO 3</text>
+    <text x="18" y="52" font-size="16" font-weight="700" fill="#ffffff">Storage &amp; I/O Layout</text>
+    <text x="18" y="74" font-size="12" fill="#cbd5e1">• Compactação ZSTD &amp; Resolução Small Files</text>
+    <text x="18" y="92" font-size="12" fill="#cbd5e1">• Predicate, Column &amp; Partition Pruning</text>
+    <text x="18" y="110" font-size="12" fill="#94a3b8">• Data Lakehouse (Parquet, Delta, Iceberg)</text>
+  </g>
+
+  <!-- CARD 4: Execution Boundaries (Bottom-Left) -->
+  <g transform="translate(60, 455)">
+    <rect width="320" height="120" rx="12" fill="url(#card-grad)" stroke="#a855f7" stroke-width="1.5"/>
+    <rect x="0" y="0" width="320" height="4" rx="2" fill="url(#grad-purple)"/>
+    <text x="18" y="28" font-size="11" font-weight="700" fill="#a855f7" letter-spacing="1">DIMENSÃO 4</text>
+    <text x="18" y="52" font-size="16" font-weight="700" fill="#ffffff">PySpark &amp; JVM Boundaries</text>
+    <text x="18" y="74" font-size="12" fill="#cbd5e1">• Eliminação de Python UDFs linha-a-linha</text>
+    <text x="18" y="92" font-size="12" fill="#cbd5e1">• Vetorização colunar PyArrow nativa</text>
+    <text x="18" y="110" font-size="12" fill="#94a3b8">• pandas API on Spark com zero pickle overhead</text>
+  </g>
+
+  <!-- CARD 5: Network & Shuffle (Bottom-Center) -->
+  <g transform="translate(440, 465)">
+    <rect width="320" height="120" rx="12" fill="url(#card-grad)" stroke="#3b82f6" stroke-width="1.5"/>
+    <rect x="0" y="0" width="320" height="4" rx="2" fill="url(#grad-blue)"/>
+    <text x="18" y="28" font-size="11" font-weight="700" fill="#3b82f6" letter-spacing="1">DIMENSÃO 5</text>
+    <text x="18" y="52" font-size="16" font-weight="700" fill="#ffffff">Network &amp; Shuffle</text>
+    <text x="18" y="74" font-size="12" fill="#cbd5e1">• SortMergeJoin para Broadcast Hash Join</text>
+    <text x="18" y="92" font-size="12" fill="#cbd5e1">• Dimensionamento de partições (128-256MB)</text>
+    <text x="18" y="110" font-size="12" fill="#94a3b8">• Zero Disk Spill em estágios de agregação</text>
+  </g>
+
+  <!-- CARD 6: FinOps & Concorrência (Bottom-Right) -->
+  <g transform="translate(820, 455)">
+    <rect width="320" height="120" rx="12" fill="url(#card-grad)" stroke="#eab308" stroke-width="1.5"/>
+    <rect x="0" y="0" width="320" height="4" rx="2" fill="url(#grad-yellow)"/>
+    <text x="18" y="28" font-size="11" font-weight="700" fill="#eab308" letter-spacing="1">DIMENSÃO 6</text>
+    <text x="18" y="52" font-size="16" font-weight="700" fill="#ffffff">FinOps &amp; Concorrência</text>
+    <text x="18" y="74" font-size="12" fill="#cbd5e1">• Fair Scheduler Pools &amp; Queue Management</text>
+    <text x="18" y="92" font-size="12" fill="#cbd5e1">• Resiliência a Spot Loss sem recomputação</text>
+    <text x="18" y="110" font-size="12" fill="#94a3b8">• Guardrails de teto de orçamento por run</text>
+  </g>
+
+  <!-- Footer Legend -->
+  <text x="600" y="650" text-anchor="middle" font-size="12" fill="#64748b">
+    Cada dimensão possui uma skill correspondente com fixtures executáveis, guardrails determinísticos e testes no CI.
+  </text>
+</svg>
