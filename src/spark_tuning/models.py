@@ -30,12 +30,19 @@ class Decision(str, Enum):
 class Metrics:
     duration_seconds: float
     cost_usd: float
-    shuffle_write_bytes: int = 0
-    spill_disk_bytes: int = 0
-    gc_seconds: float = 0.0
-    task_p95_seconds: float = 0.0
+    shuffle_write_bytes: int | None = None
+    spill_disk_bytes: int | None = None
+    gc_seconds: float | None = None
+    task_p95_seconds: float | None = None
     failures: int = 0
     correctness: bool = True
+    stages_count: int | None = None
+    tasks_count: int | None = None
+    task_retries: int | None = None
+    bytes_read: int | None = None
+    bytes_written: int | None = None
+    shuffle_read_bytes: int | None = None
+    spill_memory_bytes: int | None = None
 
 
 @dataclass(frozen=True)

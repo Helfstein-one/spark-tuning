@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import asdict
-
 from .adapters import metrics_dict
 from .evaluator import evaluate
 from .models import Decision, Iteration, LoopResult, RunSpec, RunState
@@ -23,7 +21,7 @@ class LoopEngine:
             iteration = Iteration(number=number, hypothesis=str(hypothesis.get("id", number)))
             try:
                 metrics = self.runner.run(spec, number, hypothesis)
-            except Exception as exc:
+            except (RuntimeError, ValueError, OSError) as exc:
                 iteration.decision = Decision.ROLLBACK
                 iteration.reason = f"experiment failed: {exc}"
                 iterations.append(iteration)
