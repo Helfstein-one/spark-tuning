@@ -1,4 +1,4 @@
-name: Skills validation & Deep Test Tree
+name: Skills validation
 
 on:
   pull_request:
@@ -7,18 +7,16 @@ on:
   workflow_dispatch:
 
 jobs:
-  # -------------------------------------------------------------------------
-  # Nível 1: Validação de Documentação, Contratos do Loop e Licença
-  # -------------------------------------------------------------------------
-  01-contracts:
-    name: "01. Contratos & Documentação"
+  contracts:
+    name: 01 Documentation and Contracts
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Validar integridade dos contratos e arquivos requeridos
+      - name: Validate required files
+        shell: bash
         run: |
           test -f README.md
           test -f LICENSE
@@ -26,111 +24,108 @@ jobs:
           test -f templates/SKILL_TEMPLATE.md
           test -f templates/BENCHMARK_TEMPLATE.md
           test -f templates/DECISION_TEMPLATE.md
+          test -f skills/README.md
           test -f docs/engineering-loop.md
-          test -f docs/cognitive-loop.md
+          test -f docs/pr-safety.md
+          test -f docs/skill-lifecycle.md
+          test -f templates/LOOP_RUN_TEMPLATE.md
           test -f scripts/validate_loop.sh
-      - name: Validar sintaxe JSON e schemas
-        run: |
-          python3 -c "import json, glob; [json.load(open(p)) for p in glob.glob('**/*.json', recursive=True)]"
-      - name: Executar validação de conformidade do loop
+      - name: Validate loop contract
         run: bash scripts/validate_loop.sh
 
-  # -------------------------------------------------------------------------
-  # Nível 2: Testes Profundos das Camadas Unitárias por Domínio (Paralelos)
-  # -------------------------------------------------------------------------
-  02-core-domain:
-    name: "02. Core: Modelos, Compatibilidade & Prioritizer"
+  schema:
+    name: 02 Schema and metadata
     runs-on: ubuntu-latest
-    needs: 01-contracts
+    needs: contracts
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Testar modelos de domínio, priorização e matriz de compatibilidade
-        run: PYTHONPATH=src python3 -m unittest discover -s tests/unit/core -v
-
-  03-diagnostics-gate:
-    name: "03. Diagnostics & Quality Gate"
-    runs-on: ubuntu-latest
-    needs: 01-contracts
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Testar classificação de gargalos (skew, spill, GC, shuffle) e DataQualityGate
-        run: PYTHONPATH=src python3 -m unittest tests/unit/test_batch1_pillars.py -v
-
-  04-safety-canary:
-    name: "04. Safety, Rollback & Sanitização"
-    runs-on: ubuntu-latest
-    needs: 01-contracts
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Testar allowlists de arquivos, rollback atômico, canary e sanitização de logs
+      - name: Validate YAML and JSON when present
+        shell: bash
         run: |
-          PYTHONPATH=src python3 -m unittest tests/unit/test_batch3_pillars.py -v
+          json_files=()
+          yaml_files=()
+          while IFS= read -r -d '' path; do json_files+=("$path"); done < <(find . -type f -name '*.json' -print0)
+          while IFS= read -r -d '' path; do yaml_files+=("$path"); done < <(find . -type f \( -name '*.yml' -o -name '*.yaml' \) -print0)
+          if [ "${#json_files[@]}" -gt 0 ]; then
+            python -c 'import json, sys; [json.load(open(path)) for path in sys.argv[1:]]' "${json_files[@]}"
+          fi
+          if [ "${#yaml_files[@]}" -gt 0 ]; then
+            ruby -e 'require "yaml"; ARGV.each { |path| YAML.load_file(path) }' "${yaml_files[@]}"
+          fi
+          echo "metadata syntax ok"
 
-  05-multi-agent:
-    name: "05. Multi-Agent Specialization & FinOps Arbiter"
+  unit_tests:
+    name: 03 Granular Unit Tests
     runs-on: ubuntu-latest
-    needs: [02-core-domain, 03-diagnostics-gate]
+    needs: schema
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Testar agentes especialistas (Storage, Shuffle) e veto do FinOps Arbiter
-        run: PYTHONPATH=src python3 -m unittest discover -s tests/unit/agents -v
+      - name: Check Python syntax
+        shell: bash
+        run: |
+          python -m compileall -q src tests examples scripts
+      - name: Run Core, Diagnostics, and Safety tests
+        run: |
+          PYTHONPATH=src python -m unittest discover -s tests/unit -v
 
-  06-bayesian-search:
-    name: "06. Otimização Bayesiana & Live Monitor"
+  multi_agent_and_advanced:
+    name: 04 Multi-Agent and Advanced Tuning
     runs-on: ubuntu-latest
-    needs: [02-core-domain, 04-safety-canary]
+    needs: unit_tests
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Testar busca Bayesiana e Early-Abort em tempo real via Spark UI API
-        run: PYTHONPATH=src python3 -m unittest tests/unit/test_advanced_skills_extension.py -v
+      - name: Run Multi-Agent, FinOps Arbiter, and Bayesian Search tests
+        run: |
+          PYTHONPATH=src python -m unittest tests/unit/agents/test_specialized_agents.py tests/unit/test_advanced_skills_extension.py -v
 
-  # -------------------------------------------------------------------------
-  # Nível 3: Validação de Performance A/B e Benchmarks Multi-Tecnologia
-  # -------------------------------------------------------------------------
-  07-ab-benchmarks:
-    name: "07. Harness A/B & Benchmarks Multi-Tecnologia"
+  benchmarks:
+    name: 05 Benchmarks and A/B Scenarios
     runs-on: ubuntu-latest
-    needs: [05-multi-agent, 06-bayesian-search]
+    needs: multi_agent_and_advanced
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Validar saltos de performance (PySpark Arrow, Broadcast, ZSTD, Spill Zero)
-        run: PYTHONPATH=src python3 -m unittest discover -s tests/unit/experimentation -v
+      - name: Run Multi-Technology A/B Benchmarks and Anti-Pattern Detection tests
+        run: |
+          PYTHONPATH=src python -m unittest discover -s tests/integration -v
+          PYTHONPATH=src python -m unittest tests/unit/experimentation/test_multi_tech_benchmarks.py -v
 
-  # -------------------------------------------------------------------------
-  # Nível 4: Gate de Regressão e Verificação Integrada do Loop
-  # -------------------------------------------------------------------------
-  08-regression-gate:
-    name: "08. Gate Final de Regressão & Decisão Pareto"
+  correctness_and_regression:
+    name: 06 Correctness and Decision Gate
     runs-on: ubuntu-latest
-    needs: 07-ab-benchmarks
+    needs: benchmarks
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Executar teste integrado do motor de loop de ponta a ponta
-        run: PYTHONPATH=src python3 -m unittest tests/test_engine.py tests/test_event_log_runner.py -v
-      - name: Validar políticas de decisão de Pareto
+      - name: Require correctness contract
+        shell: bash
+        run: |
+          grep -q "checksum" templates/BENCHMARK_TEMPLATE.md
+          grep -q "correctness" templates/BENCHMARK_TEMPLATE.md
+          grep -q "row_count" README.md
+      - name: Require benchmark metrics
+        shell: bash
+        run: |
+          for metric in duration shuffle spill gc cost; do
+            grep -qi "$metric" templates/BENCHMARK_TEMPLATE.md
+          done
+      - name: Validate decision policy
+        shell: bash
         run: |
           grep -q "accept" templates/DECISION_TEMPLATE.md
           grep -q "reject" templates/DECISION_TEMPLATE.md
           grep -q "inconclusive" templates/DECISION_TEMPLATE.md
-          echo "Todos os gates da árvore de CI passaram com sucesso!"
+          grep -q "correctness == true" docs/ci-validation-tree.md
+      - name: Run End-to-End Loop Engine tests
+        run: |
+          PYTHONPATH=src python -m unittest tests/test_engine.py tests/test_event_log_runner.py -v
