@@ -60,7 +60,7 @@ class BottleneckDiagnosisEngine:
             candidates.append((BottleneckCategory.SPILL, 0.90))
 
         # 2. GC Check (> 10% of total duration)
-        if metrics.gc_seconds is not None and metrics.duration_seconds > 0:
+        if metrics.gc_seconds is not None and metrics.duration_seconds is not None and metrics.duration_seconds > 0:
             gc_ratio = metrics.gc_seconds / metrics.duration_seconds
             if gc_ratio > 0.10:
                 evidences.append(
@@ -78,6 +78,7 @@ class BottleneckDiagnosisEngine:
             metrics.task_p95_seconds is not None
             and metrics.tasks_count is not None
             and metrics.tasks_count > 1
+            and metrics.duration_seconds is not None
             and metrics.duration_seconds > 0
         ):
             avg_task_duration = metrics.duration_seconds / metrics.tasks_count

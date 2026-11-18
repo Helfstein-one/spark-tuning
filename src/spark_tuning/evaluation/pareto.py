@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
-from spark_tuning.models import Metrics
+from spark_tuning.models import Metrics, MetricValue
 
 
 @dataclass
@@ -12,38 +13,69 @@ class ParetoCandidate:
     metrics: Metrics
     is_pareto_optimal: bool = False
     trade_off_notes: str = ""
+    unassessed_dimensions: tuple[str, ...] = ()
+
+
+def _metric_num(metrics: Metrics, field_name: str) -> float | int | None:
+    if hasattr(metrics, "get_metric"):
+        mv = metrics.get_metric(field_name)
+        return mv.value if mv.is_usable else None
+    val = getattr(metrics, field_name, None)
+    if isinstance(val, MetricValue):
+        return val.value if val.is_usable else None
+    if val is None or isinstance(val, bool):
+        return None
+    return val if math.isfinite(float(val)) else None
 
 
 class ParetoDecisionEngine:
     """Evaluates multi-objective trade-offs (e.g. Duration vs Cost vs Spill vs GC)."""
 
+    _REQUIRED_OBJECTIVES: tuple[str, ...] = ("duration_seconds", "cost_usd", "failures")
+    _OPTIONAL_OBJECTIVES: tuple[str, ...] = ("spill_disk_bytes", "gc_seconds")
+
     @classmethod
     def dominates(cls, a: Metrics, b: Metrics) -> bool:
         """Returns True if candidate 'a' dominates 'b' (better or equal in all, strictly better in at least one)."""
-        # We want to minimize: duration_seconds, cost_usd, spill_disk_bytes, gc_seconds, failures
-        a_spill = a.spill_disk_bytes or 0
-        b_spill = b.spill_disk_bytes or 0
-        a_gc = a.gc_seconds or 0.0
-        b_gc = b.gc_seconds or 0.0
+        if a.correctness is not True or b.correctness is None:
+            return False
 
-        not_worse = (
-            a.duration_seconds <= b.duration_seconds
-            and a.cost_usd <= b.cost_usd
-            and a_spill <= b_spill
-            and a_gc <= b_gc
-            and a.failures <= b.failures
-            and (a.correctness >= b.correctness)
-        )
+        a_dur = _metric_num(a, "duration_seconds")
+        b_dur = _metric_num(b, "duration_seconds")
+        a_cost = _metric_num(a, "cost_usd")
+        b_cost = _metric_num(b, "cost_usd")
+        a_fail = _metric_num(a, "failures")
+        b_fail = _metric_num(b, "failures")
+
+        if None in (a_dur, b_dur, a_cost, b_cost, a_fail, b_fail):
+            return False
+
+        if a_dur > b_dur or a_cost > b_cost or a_fail > b_fail:  # type: ignore[operator]
+            return False
+        if int(a.correctness) < int(b.correctness):
+            return False
 
         strictly_better = (
-            a.duration_seconds < b.duration_seconds
-            or a.cost_usd < b.cost_usd
-            or a_spill < b_spill
-            or a_gc < b_gc
-            or a.failures < b.failures
+            a_dur < b_dur  # type: ignore[operator]
+            or a_cost < b_cost  # type: ignore[operator]
+            or a_fail < b_fail  # type: ignore[operator]
+            or (a.correctness and not b.correctness)
         )
 
-        return not_worse and strictly_better
+        # Optional objectives: symmetric None is neutral; asymmetric None blocks dominance.
+        for field_name in cls._OPTIONAL_OBJECTIVES:
+            va = _metric_num(a, field_name)
+            vb = _metric_num(b, field_name)
+            if va is None and vb is None:
+                continue
+            if (va is None) != (vb is None):
+                return False
+            if va > vb:  # type: ignore[operator]
+                return False
+            if va < vb:  # type: ignore[operator]
+                strictly_better = True
+
+        return strictly_better
 
     @classmethod
     def compute_frontier(
@@ -54,25 +86,58 @@ class ParetoDecisionEngine:
         results: list[ParetoCandidate] = []
         all_metrics = {"baseline": baseline, **candidates}
 
-        for cand_id, cand_metric in candidates.items():
-            # Check if any candidate or baseline strictly dominates this candidate
-            dominated = False
-            for other_id, other_metric in all_metrics.items():
-                if other_id == cand_id:
-                    continue
-                if cls.dominates(other_metric, cand_metric):
-                    dominated = True
-                    break
+        measured_optional: set[str] = set()
+        for metric_obj in all_metrics.values():
+            for field_name in cls._OPTIONAL_OBJECTIVES:
+                if _metric_num(metric_obj, field_name) is not None:
+                    measured_optional.add(field_name)
 
-            is_optimal = not dominated
-            notes = ""
-            if is_optimal:
-                if cand_metric.duration_seconds < baseline.duration_seconds and cand_metric.cost_usd > baseline.cost_usd:
-                    notes = "Trade-off: Faster execution but higher cost."
-                elif cand_metric.cost_usd < baseline.cost_usd and cand_metric.duration_seconds > baseline.duration_seconds:
-                    notes = "Trade-off: Cost savings with slightly higher runtime."
-                elif cand_metric.duration_seconds < baseline.duration_seconds and cand_metric.cost_usd <= baseline.cost_usd:
-                    notes = "Dominant win: Improved duration without cost increase."
+        base_dur = _metric_num(baseline, "duration_seconds")
+        base_cost = _metric_num(baseline, "cost_usd")
+
+        for cand_id, cand_metric in candidates.items():
+            unassessed: list[str] = []
+            for req_field in cls._REQUIRED_OBJECTIVES:
+                if _metric_num(cand_metric, req_field) is None:
+                    unassessed.append(req_field)
+            if cand_metric.correctness is None:
+                unassessed.append("correctness")
+            for opt_field in cls._OPTIONAL_OBJECTIVES:
+                if opt_field in measured_optional and _metric_num(cand_metric, opt_field) is None:
+                    unassessed.append(opt_field)
+
+            unassessed_tuple = tuple(unassessed)
+            if cand_metric.correctness is not True:
+                is_optimal = False
+                notes = (
+                    "Ineligible: correctness gate failed"
+                    if cand_metric.correctness is False
+                    else "Ineligible: correctness status unknown"
+                )
+            elif unassessed_tuple:
+                is_optimal = False
+                notes = f"Incomparable: missing telemetry ({', '.join(unassessed_tuple)})"
+            else:
+                dominated = False
+                for other_id, other_metric in all_metrics.items():
+                    if other_id == cand_id:
+                        continue
+                    if cls.dominates(other_metric, cand_metric):
+                        dominated = True
+                        break
+
+                is_optimal = not dominated
+                notes = ""
+                if is_optimal and base_dur is not None and base_cost is not None:
+                    cand_dur = _metric_num(cand_metric, "duration_seconds")
+                    cand_cost = _metric_num(cand_metric, "cost_usd")
+                    if cand_dur is not None and cand_cost is not None:
+                        if cand_dur < base_dur and cand_cost > base_cost:
+                            notes = "Trade-off: Faster execution but higher cost."
+                        elif cand_cost < base_cost and cand_dur > base_dur:
+                            notes = "Trade-off: Cost savings with slightly higher runtime."
+                        elif cand_dur < base_dur and cand_cost <= base_cost:
+                            notes = "Dominant win: Improved duration without cost increase."
 
             results.append(
                 ParetoCandidate(
@@ -80,6 +145,7 @@ class ParetoDecisionEngine:
                     metrics=cand_metric,
                     is_pareto_optimal=is_optimal,
                     trade_off_notes=notes,
+                    unassessed_dimensions=unassessed_tuple,
                 )
             )
 

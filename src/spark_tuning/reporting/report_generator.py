@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
 from spark_tuning.models import LoopResult, Metrics
+
+
+def _fmt_metric(metrics: Metrics, field_name: str) -> str:
+    if hasattr(metrics, "get_metric"):
+        mv = metrics.get_metric(field_name)
+        if not mv.is_usable:
+            return "unknown"
+        return str(mv.value)
+    val = getattr(metrics, field_name, None)
+    return "unknown" if val is None else str(val)
 
 
 class OptimizationReportGenerator:
@@ -22,15 +31,20 @@ class OptimizationReportGenerator:
             "",
             "| Iteration | Hypothesis | Duration (s) | Cost ($) | Spill Disk (B) | GC (s) | Decision | Reason |",
             "|---|---|---|---|---|---|---|---|",
-            f"| 0 (Baseline) | - | {baseline.duration_seconds} | {baseline.cost_usd} | {baseline.spill_disk_bytes or 0} | {baseline.gc_seconds or 0.0} | BASELINE | - |",
+            (
+                f"| 0 (Baseline) | - | {_fmt_metric(baseline, 'duration_seconds')} "
+                f"| {_fmt_metric(baseline, 'cost_usd')} "
+                f"| {_fmt_metric(baseline, 'spill_disk_bytes')} "
+                f"| {_fmt_metric(baseline, 'gc_seconds')} | BASELINE | - |"
+            ),
         ]
 
         for it in result.iterations:
             m = it.metrics
-            dur = m.duration_seconds if m else "-"
-            cost = m.cost_usd if m else "-"
-            spill = (m.spill_disk_bytes or 0) if m else "-"
-            gc = (m.gc_seconds or 0.0) if m else "-"
+            dur = _fmt_metric(m, "duration_seconds") if m else "-"
+            cost = _fmt_metric(m, "cost_usd") if m else "-"
+            spill = _fmt_metric(m, "spill_disk_bytes") if m else "-"
+            gc = _fmt_metric(m, "gc_seconds") if m else "-"
             dec = it.decision.value if it.decision else "-"
             lines.append(f"| {it.number} | {it.hypothesis} | {dur} | {cost} | {spill} | {gc} | {dec} | {it.reason} |")
 

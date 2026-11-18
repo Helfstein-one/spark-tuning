@@ -28,7 +28,8 @@ class LoopEngine:
                 return self._finish(spec, RunState.ROLLBACK, Decision.ROLLBACK, iterations, iteration.reason)
 
             iteration.metrics = metrics
-            total_cost += metrics.cost_usd
+            if metrics.cost_usd is not None:
+                total_cost += metrics.cost_usd
             evaluation = evaluate(spec, metrics)
             iteration.decision = evaluation.decision
             iteration.reason = evaluation.reason

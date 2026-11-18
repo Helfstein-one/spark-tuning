@@ -73,12 +73,22 @@ class ExperimentationHarness:
         quality_rep = DataQualityGate.evaluate(baseline_quality_meta, candidate_quality_meta)
 
         # 3. Pareto frontier
+        cand_failures = (
+            sum(m.failures for m in candidate_runs)
+            if all(m.failures is not None for m in candidate_runs)
+            else None
+        )
+        base_failures = (
+            sum(m.failures for m in baseline_runs)
+            if all(m.failures is not None for m in baseline_runs)
+            else None
+        )
         cand_median_metric = Metrics(
             duration_seconds=stat_comp.candidate_summary.median,
             cost_usd=round(stat_comp.candidate_summary.median * spec.cost_per_second_usd, 4),
             spill_disk_bytes=candidate_runs[0].spill_disk_bytes,
             gc_seconds=candidate_runs[0].gc_seconds,
-            failures=sum(m.failures for m in candidate_runs),
+            failures=cand_failures,
             correctness=quality_rep.passed,
         )
         base_median_metric = Metrics(
@@ -86,7 +96,7 @@ class ExperimentationHarness:
             cost_usd=round(stat_comp.baseline_summary.median * spec.cost_per_second_usd, 4),
             spill_disk_bytes=baseline_runs[0].spill_disk_bytes,
             gc_seconds=baseline_runs[0].gc_seconds,
-            failures=sum(m.failures for m in baseline_runs),
+            failures=base_failures,
             correctness=True,
         )
 
@@ -100,11 +110,26 @@ class ExperimentationHarness:
         dur_pct = round(stat_comp.improvement_ratio * 100, 2)
         cost_base = base_median_metric.cost_usd
         cost_cand = cand_median_metric.cost_usd
-        cost_pct = round(((cost_base - cost_cand) / cost_base) * 100, 2) if cost_base > 0 else 0.0
+        cost_pct = (
+            round(((cost_base - cost_cand) / cost_base) * 100, 2)
+            if cost_base is not None and cost_cand is not None and cost_base > 0
+            else 0.0
+        )
 
-        base_spill = baseline_runs[0].spill_disk_bytes or 0
-        cand_spill = candidate_runs[0].spill_disk_bytes or 0
-        spill_eliminated = (base_spill > 0 and cand_spill == 0)
+        base_spill = baseline_runs[0].spill_disk_bytes
+        cand_spill = candidate_runs[0].spill_disk_bytes
+        spill_eliminated = (
+            base_spill is not None
+            and cand_spill is not None
+            and base_spill > 0
+            and cand_spill == 0
+        )
+
+        quality_text = (
+            "with 100% data quality preservation."
+            if quality_rep.passed
+            else f"but data quality gate failed ({quality_rep.reason})."
+        )
 
         scorecard = SkillScorecard(
             skill_name=spec.skill_name,
@@ -117,7 +142,7 @@ class ExperimentationHarness:
             statistically_significant=stat_comp.statistically_significant,
             summary=(
                 f"Skill '{spec.skill_name}' delivered {dur_pct}% speedup and {cost_pct}% cost reduction "
-                f"with 100% data quality preservation."
+                f"{quality_text}"
             ),
         )
 
