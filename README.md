@@ -4,6 +4,8 @@
 
 Repositório, framework e playbook de engenharia para descobrir, diagnosticar, testar e promover otimizações reproduzíveis no **Apache Spark** sob rigor matemático, correção de dados e governança FinOps.
 
+Para usar o projeto no Devin ou em outro agente, copie [`DEVIN.md`](DEVIN.md). Esse arquivo consolida o contexto do produto, a memória operacional, as skills, o loop cognitivo, os comandos, os guardrails e a política de PR em um único pacote portátil.
+
 ---
 
 ## 1. Padrão Cognitivo (O-C-H-E-M-V-D-L)
