@@ -1,0 +1,8 @@
+{"Event":"SparkListenerLogStart","Spark Version":"4.0.0"}
+{"Event":"SparkListenerApplicationStart","App Name":"Spark4SQLApp","App ID":"app-4x-0001","Time":1700000000000,"User":"spark"}
+{"Event":"org.apache.spark.sql.execution.ui.SparkListenerSQLExecutionStart","executionId":1,"description":"parquet-join"}
+{"Event":"SparkListenerStageSubmitted","Stage Info":{"Stage ID":0,"Stage Attempt ID":0,"Stage Name":"aqe-scan","Number of Tasks":1,"Submission Time":1700000000200}}
+{"Event":"SparkListenerTaskEnd","Stage ID":0,"Stage Attempt ID":0,"Task Type":"ResultTask","Task End Reason":{"Reason":"Success"},"Task Info":{"Task ID":0,"Index":0,"Attempt":0,"Launch Time":1700000000500,"Finish Time":1700000001500,"Failed":false},"Task Metrics":{"Executor Run Time":1000,"JVM GC Time":30,"Memory Bytes Spilled":0,"Disk Bytes Spilled":0,"Input Metrics":{"Bytes Read":2048},"Output Metrics":{"Bytes Written":1024},"Shuffle Read Metrics":{"Total Bytes Read":600},"Shuffle Write Metrics":{"Shuffle Bytes Written":800}}}
+{"Event":"SparkListenerStageCompleted","Stage Info":{"Stage ID":0,"Stage Attempt ID":0,"Stage Name":"aqe-scan","Number of Tasks":1,"Submission Time":1700000000200,"Completion Time":1700000002000}}
+{"Event":"org.apache.spark.sql.execution.ui.SparkListenerSQLExecutionEnd","executionId":1}
+{"Event":"SparkListenerApplicationEnd","Time":1700000002500,"ExitCode":0}

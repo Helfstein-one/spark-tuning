@@ -17,6 +17,14 @@ class EarlyAbortDecision:
     observed_gc_ms: int
 
 
+def _safe_int(value: Any) -> int:
+    if value is None or isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    return 0
+
+
 class SparkLiveMonitor:
     """Monitors live Spark stage execution via the Spark Driver REST API (:4040)."""
 
@@ -36,10 +44,10 @@ class SparkLiveMonitor:
         elapsed_seconds: float,
     ) -> EarlyAbortDecision:
         spill_bytes = (
-            stage_metrics.get("diskBytesSpilled", 0)
-            + stage_metrics.get("memoryBytesSpilled", 0)
+            _safe_int(stage_metrics.get("diskBytesSpilled"))
+            + _safe_int(stage_metrics.get("memoryBytesSpilled"))
         )
-        jvm_gc_ms = stage_metrics.get("jvmGcTime", 0)
+        jvm_gc_ms = _safe_int(stage_metrics.get("jvmGcTime"))
         jvm_gc_sec = jvm_gc_ms / 1000.0
 
         # Check for catastrophic disk spill early in the run

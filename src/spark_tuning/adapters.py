@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
-from .models import Metrics, RunSpec
+from .models import Metrics, ParseDiagnostics, RunSpec
 
 
 class JsonArtifactStore:
@@ -23,87 +26,322 @@ class JsonArtifactStore:
         target.write_text(json.dumps(payload, indent=2, default=str) + "\n")
 
 
+def _first_number(mapping: Any, *keys: str) -> int | float | None:
+    if not isinstance(mapping, dict):
+        return None
+    for key in keys:
+        if key in mapping:
+            val = mapping[key]
+            if (
+                val is not None
+                and not isinstance(val, bool)
+                and isinstance(val, (int, float))
+                and math.isfinite(float(val))
+            ):
+                return val
+    return None
+
+
+def _add_opt_int(total: int | None, delta: int | float | None) -> int | None:
+    if delta is None:
+        return total
+    return (total or 0) + int(delta)
+
+
+def _add_opt_float(total: float | None, delta: int | float | None) -> float | None:
+    if delta is None:
+        return total
+    return (total or 0.0) + float(delta)
+
+
 class SparkEventLogParser:
-    """Parses JSON-lines Spark event logs to extract execution metrics without turning missing metrics into zeros."""
+    """Parses JSON-lines Spark event logs with version/schema detection and parse diagnostics."""
+
+    KNOWN_SPARK_EVENTS: frozenset[str] = frozenset(
+        {
+            "SparkListenerLogStart",
+            "SparkListenerApplicationStart",
+            "SparkListenerApplicationEnd",
+            "SparkListenerStageSubmitted",
+            "SparkListenerStageCompleted",
+            "SparkListenerTaskStart",
+            "SparkListenerTaskGettingResult",
+            "SparkListenerTaskEnd",
+            "SparkListenerJobStart",
+            "SparkListenerJobEnd",
+            "SparkListenerEnvironmentUpdate",
+            "SparkListenerBlockManagerAdded",
+            "SparkListenerBlockManagerRemoved",
+            "SparkListenerExecutorAdded",
+            "SparkListenerExecutorRemoved",
+            "SparkListenerExecutorMetricsUpdate",
+            "SparkListenerResourceProfileAdded",
+            "SparkListenerUnpersistRDD",
+            "org.apache.spark.sql.execution.ui.SparkListenerSQLExecutionStart",
+            "org.apache.spark.sql.execution.ui.SparkListenerSQLExecutionEnd",
+            "org.apache.spark.sql.execution.ui.SparkListenerDriverAccumUpdates",
+            "org.apache.spark.sql.execution.ui.SparkListenerAdaptiveExecutionUpdate",
+        }
+    )
 
     @classmethod
-    def parse_file(cls, log_path: Path | str, cost_per_second: float = 0.0) -> Metrics:
+    def parse_with_diagnostics(
+        cls,
+        log_path: Path | str,
+        cost_per_second: float = 0.0,
+    ) -> tuple[Metrics, ParseDiagnostics]:
         path = Path(log_path)
         if not path.exists():
             raise FileNotFoundError(f"Event log file not found: {path}")
 
-        app_start_time: int | None = None
-        app_end_time: int | None = None
+        spark_version: str | None = None
+        spark_major: int | None = None
+        saw_2x_marker = False
+        saw_3x_marker = False
+        saw_4x_marker = False
+
+        app_start_time: int | float | None = None
+        app_end_time: int | float | None = None
+        stages_submitted = 0
         stages_count = 0
-        task_durations_ms: list[int] = []
+        tasks_ended = 0
+        task_durations_ms: list[float] = []
         task_retries = 0
         failures = 0
 
-        # Optional task metrics accumulators (None if not present in any task)
-        has_task_metrics = False
-        gc_time_ms_total = 0
-        shuffle_write_bytes_total = 0
-        shuffle_read_bytes_total = 0
-        bytes_read_total = 0
-        bytes_written_total = 0
-        spill_disk_bytes_total = 0
-        spill_mem_bytes_total = 0
+        total_lines = 0
+        valid_events = 0
+        invalid_json_lines = 0
+        unknown_events = 0
+        last_nonempty_line_invalid = False
+        warnings: list[str] = []
+
+        # Absent task metric categories stay None rather than silently coercing to 0
+        has_any_task_metrics = False
+        gc_time_ms_total: float | None = None
+        shuffle_write_bytes_total: int | None = None
+        shuffle_read_bytes_total: int | None = None
+        bytes_read_total: int | None = None
+        bytes_written_total: int | None = None
+        spill_disk_bytes_total: int | None = None
+        spill_mem_bytes_total: int | None = None
 
         with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
+            for line_no, raw_line in enumerate(f, start=1):
+                line = raw_line.strip()
                 if not line:
                     continue
+                total_lines += 1
+
                 try:
                     event = json.loads(line)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as exc:
+                    invalid_json_lines += 1
+                    last_nonempty_line_invalid = True
+                    warnings.append(f"Line {line_no}: invalid JSON ({exc.msg})")
                     continue
 
-                event_type = event.get("Event")
+                if not isinstance(event, dict):
+                    invalid_json_lines += 1
+                    last_nonempty_line_invalid = True
+                    warnings.append(
+                        f"Line {line_no}: expected JSON object, got {type(event).__name__}"
+                    )
+                    continue
 
-                if event_type == "SparkListenerApplicationStart":
-                    app_start_time = event.get("Timestamp")
+                last_nonempty_line_invalid = False
+                valid_events += 1
+
+                event_type = event.get("Event")
+                if not isinstance(event_type, str) or not event_type:
+                    unknown_events += 1
+                    warnings.append(f"Line {line_no}: missing or non-string 'Event' field")
+                    continue
+
+                if event_type not in cls.KNOWN_SPARK_EVENTS:
+                    unknown_events += 1
+                    warnings.append(f"Line {line_no}: unknown Spark event '{event_type}'")
+                    continue
+
+                if event_type == "SparkListenerLogStart":
+                    sv = event.get("Spark Version") or event.get("sparkVersion")
+                    if isinstance(sv, str) and sv.strip():
+                        spark_version = sv.strip()
+                        match = re.match(r"^v?(\d+)", spark_version)
+                        if match:
+                            spark_major = int(match.group(1))
+                elif event_type == "SparkListenerEnvironmentUpdate":
+                    spark_props = event.get("Spark Properties")
+                    if isinstance(spark_props, dict) and spark_version is None:
+                        sv = spark_props.get("spark.version")
+                        if isinstance(sv, str) and sv.strip():
+                            spark_version = sv.strip()
+                            match = re.match(r"^v?(\d+)", spark_version)
+                            if match:
+                                spark_major = int(match.group(1))
+                            if spark_version.startswith("4."):
+                                saw_4x_marker = True
+                elif event_type == "SparkListenerResourceProfileAdded":
+                    saw_3x_marker = True
+                elif event_type == "SparkListenerExecutorAdded":
+                    exec_info = event.get("Executor Info")
+                    if isinstance(exec_info, dict) and "Resource Profile Id" in exec_info:
+                        saw_3x_marker = True
+                elif event_type == "SparkListenerApplicationStart":
+                    ts = _first_number(event, "Timestamp", "Time")
+                    if ts is not None:
+                        app_start_time = ts
+                    if "Timestamp" not in event and "Time" in event:
+                        saw_4x_marker = True
                 elif event_type == "SparkListenerApplicationEnd":
-                    app_end_time = event.get("Timestamp")
+                    ts = _first_number(event, "Timestamp", "Time")
+                    if ts is not None:
+                        app_end_time = ts
+                    if "Timestamp" not in event and "Time" in event:
+                        saw_4x_marker = True
+                    exit_code = _first_number(event, "ExitCode")
+                    if exit_code is not None and exit_code != 0:
+                        failures += 1
+                        warnings.append(
+                            f"Line {line_no}: SparkListenerApplicationEnd reported ExitCode={exit_code}"
+                        )
+                elif event_type == "SparkListenerStageSubmitted":
+                    stages_submitted += 1
+                    stage_info = event.get("Stage Info")
+                    if isinstance(stage_info, dict) and "Resource Profile Id" in stage_info:
+                        saw_3x_marker = True
                 elif event_type == "SparkListenerStageCompleted":
                     stages_count += 1
-                    stage_info = event.get("Stage Info", {})
-                    if stage_info.get("Failure Reason"):
-                        failures += 1
+                    stage_info = event.get("Stage Info")
+                    if isinstance(stage_info, dict):
+                        if "Resource Profile Id" in stage_info:
+                            saw_3x_marker = True
+                        if stage_info.get("Failure Reason"):
+                            failures += 1
                 elif event_type == "SparkListenerTaskEnd":
-                    task_info = event.get("Task Info", {})
-                    if task_info.get("Attempt", 0) > 0:
-                        task_retries += 1
-                    if task_info.get("Failed", False):
-                        failures += 1
+                    tasks_ended += 1
+                    task_info = event.get("Task Info")
+                    if isinstance(task_info, dict):
+                        if "Partition Id" in task_info:
+                            saw_3x_marker = True
+                        attempt = _first_number(task_info, "Attempt")
+                        if attempt is not None and attempt > 0:
+                            task_retries += 1
+                        if task_info.get("Failed") is True:
+                            failures += 1
 
-                    launch_time = task_info.get("Launch Time")
-                    finish_time = task_info.get("Finish Time")
-                    if launch_time and finish_time and finish_time >= launch_time:
-                        task_durations_ms.append(finish_time - launch_time)
+                        launch_time = _first_number(task_info, "Launch Time")
+                        finish_time = _first_number(task_info, "Finish Time")
+                        if (
+                            launch_time is not None
+                            and finish_time is not None
+                            and finish_time >= launch_time
+                        ):
+                            task_durations_ms.append(float(finish_time - launch_time))
+
+                    if isinstance(event.get("Task Executor Metrics"), dict):
+                        saw_3x_marker = True
 
                     task_metrics = event.get("Task Metrics")
-                    if task_metrics:
-                        has_task_metrics = True
-                        gc_time_ms_total += task_metrics.get("JVM GC Time", 0)
-                        spill_disk_bytes_total += task_metrics.get("Disk Bytes Spilled", 0)
-                        spill_mem_bytes_total += task_metrics.get("Memory Bytes Spilled", 0)
+                    if isinstance(task_metrics, dict) and task_metrics:
+                        has_any_task_metrics = True
+                        gc_time_ms_total = _add_opt_float(
+                            gc_time_ms_total, _first_number(task_metrics, "JVM GC Time")
+                        )
+                        spill_disk_bytes_total = _add_opt_int(
+                            spill_disk_bytes_total, _first_number(task_metrics, "Disk Bytes Spilled")
+                        )
+                        spill_mem_bytes_total = _add_opt_int(
+                            spill_mem_bytes_total, _first_number(task_metrics, "Memory Bytes Spilled")
+                        )
 
-                        in_metrics = task_metrics.get("Input Metrics", {})
-                        bytes_read_total += in_metrics.get("Bytes Read", 0)
+                        in_metrics = task_metrics.get("Input Metrics")
+                        if isinstance(in_metrics, dict):
+                            bytes_read_total = _add_opt_int(
+                                bytes_read_total, _first_number(in_metrics, "Bytes Read")
+                            )
 
-                        out_metrics = task_metrics.get("Output Metrics", {})
-                        bytes_written_total += out_metrics.get("Bytes Written", 0)
+                        out_metrics = task_metrics.get("Output Metrics")
+                        if isinstance(out_metrics, dict):
+                            bytes_written_total = _add_opt_int(
+                                bytes_written_total, _first_number(out_metrics, "Bytes Written")
+                            )
 
-                        shuf_read = task_metrics.get("Shuffle Read Metrics", {})
-                        shuffle_read_bytes_total += shuf_read.get("Total Bytes Read", 0)
+                        shuf_read = task_metrics.get("Shuffle Read Metrics")
+                        if isinstance(shuf_read, dict):
+                            if (
+                                "Remote Merged Blocks Fetched" in shuf_read
+                                or "Merged Fetch Fallback Count" in shuf_read
+                            ):
+                                saw_3x_marker = True
+                            total_read = _first_number(shuf_read, "Total Bytes Read")
+                            if total_read is not None:
+                                shuffle_read_bytes_total = _add_opt_int(
+                                    shuffle_read_bytes_total, total_read
+                                )
+                            else:
+                                remote_read = _first_number(shuf_read, "Remote Bytes Read")
+                                local_read = _first_number(shuf_read, "Local Bytes Read")
+                                if remote_read is not None or local_read is not None:
+                                    saw_2x_marker = True
+                                    shuffle_read_bytes_total = _add_opt_int(
+                                        shuffle_read_bytes_total,
+                                        (remote_read or 0) + (local_read or 0),
+                                    )
 
-                        shuf_write = task_metrics.get("Shuffle Write Metrics", {})
-                        shuffle_write_bytes_total += shuf_write.get("Shuffle Bytes Written", 0)
+                        shuf_write = task_metrics.get("Shuffle Write Metrics")
+                        if isinstance(shuf_write, dict):
+                            sw = _first_number(shuf_write, "Shuffle Bytes Written")
+                            if sw is not None:
+                                shuffle_write_bytes_total = _add_opt_int(
+                                    shuffle_write_bytes_total, sw
+                                )
+                            else:
+                                legacy_sw = _first_number(shuf_write, "Bytes Written")
+                                if legacy_sw is not None:
+                                    saw_2x_marker = True
+                                    shuffle_write_bytes_total = _add_opt_int(
+                                        shuffle_write_bytes_total, legacy_sw
+                                    )
 
-        duration_seconds = 0.0
-        if app_start_time and app_end_time:
-            duration_seconds = max(0.0, (app_end_time - app_start_time) / 1000.0)
+        if spark_major is None:
+            if saw_4x_marker:
+                spark_major = 4
+            elif saw_3x_marker:
+                spark_major = 3
+            elif saw_2x_marker:
+                spark_major = 2
+            if spark_major is not None:
+                warnings.append(
+                    f"SparkListenerLogStart absent; inferred Spark major version {spark_major}.x from event schema"
+                )
+
+        missing_app_start = app_start_time is None
+        missing_app_end = app_end_time is None
+        truncated = (
+            last_nonempty_line_invalid
+            or (valid_events > 0 and missing_app_end)
+            or (stages_submitted > stages_count and missing_app_end)
+        )
+
+        if total_lines == 0:
+            warnings.append("Event log is empty")
+        else:
+            if missing_app_start:
+                warnings.append("Missing SparkListenerApplicationStart event")
+            if missing_app_end:
+                warnings.append("Missing SparkListenerApplicationEnd event")
+            if last_nonempty_line_invalid:
+                warnings.append("Event log appears truncated at last non-empty line")
+
+        duration_seconds: float | None = None
+        if app_start_time is not None and app_end_time is not None:
+            if app_end_time >= app_start_time:
+                duration_seconds = (app_end_time - app_start_time) / 1000.0
+            else:
+                warnings.append(
+                    f"ApplicationEnd ({app_end_time}) precedes ApplicationStart ({app_start_time})"
+                )
 
         task_p95_seconds: float | None = None
         if task_durations_ms:
@@ -111,25 +349,88 @@ class SparkEventLogParser:
             idx = int(0.95 * (len(task_durations_ms) - 1))
             task_p95_seconds = task_durations_ms[idx] / 1000.0
 
-        cost_usd = round(duration_seconds * cost_per_second, 4)
+        cost_usd: float | None = (
+            round(duration_seconds * cost_per_second, 4)
+            if duration_seconds is not None
+            else None
+        )
 
-        return Metrics(
+        if total_lines == 0 or valid_events == 0:
+            completeness_score = 0.0
+        else:
+            valid_ratio = valid_events / total_lines
+            recognized_ratio = (valid_events - unknown_events) / valid_events
+            lifecycle = 1.0
+            if missing_app_start:
+                lifecycle -= 0.30
+            if missing_app_end:
+                lifecycle -= 0.30
+            if last_nonempty_line_invalid:
+                lifecycle -= 0.20
+            if tasks_ended > 0 and not has_any_task_metrics:
+                lifecycle -= 0.10
+            lifecycle = max(0.0, lifecycle)
+            completeness_score = round(
+                max(0.0, min(1.0, valid_ratio * recognized_ratio * lifecycle)), 4
+            )
+
+        is_complete = (
+            valid_events > 0
+            and invalid_json_lines == 0
+            and not truncated
+            and not missing_app_start
+            and not missing_app_end
+            and duration_seconds is not None
+        )
+
+        if failures > 0:
+            correctness: bool | None = False
+        elif not is_complete:
+            correctness = None
+        else:
+            correctness = True
+
+        diagnostics = ParseDiagnostics(
+            spark_version=spark_version,
+            spark_major=spark_major,
+            total_lines=total_lines,
+            valid_events=valid_events,
+            invalid_json_lines=invalid_json_lines,
+            unknown_events=unknown_events,
+            truncated=truncated,
+            missing_app_start=missing_app_start,
+            missing_app_end=missing_app_end,
+            completeness_score=completeness_score,
+            is_complete=is_complete,
+            warnings=tuple(dict.fromkeys(warnings)),
+        )
+
+        metrics = Metrics(
             duration_seconds=duration_seconds,
             cost_usd=cost_usd,
-            shuffle_write_bytes=shuffle_write_bytes_total if has_task_metrics else None,
-            spill_disk_bytes=spill_disk_bytes_total if has_task_metrics else None,
-            gc_seconds=round(gc_time_ms_total / 1000.0, 4) if has_task_metrics else None,
+            shuffle_write_bytes=shuffle_write_bytes_total,
+            spill_disk_bytes=spill_disk_bytes_total,
+            gc_seconds=round(gc_time_ms_total / 1000.0, 4) if gc_time_ms_total is not None else None,
             task_p95_seconds=task_p95_seconds,
             failures=failures,
-            correctness=(failures == 0),
+            correctness=correctness,
             stages_count=stages_count,
-            tasks_count=len(task_durations_ms),
+            tasks_count=tasks_ended,
             task_retries=task_retries,
-            bytes_read=bytes_read_total if has_task_metrics else None,
-            bytes_written=bytes_written_total if has_task_metrics else None,
-            shuffle_read_bytes=shuffle_read_bytes_total if has_task_metrics else None,
-            spill_memory_bytes=spill_mem_bytes_total if has_task_metrics else None,
+            bytes_read=bytes_read_total,
+            bytes_written=bytes_written_total,
+            shuffle_read_bytes=shuffle_read_bytes_total,
+            spill_memory_bytes=spill_mem_bytes_total,
+            source=f"spark_event_log:{path.name}",
+            quality="complete" if is_complete else "incomplete",
+            parse_diagnostics=diagnostics,
         )
+        return metrics, diagnostics
+
+    @classmethod
+    def parse_file(cls, log_path: Path | str, cost_per_second: float = 0.0) -> Metrics:
+        metrics, _ = cls.parse_with_diagnostics(log_path, cost_per_second=cost_per_second)
+        return metrics
 
 
 class FixtureExperimentRunner:

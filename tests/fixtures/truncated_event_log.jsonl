@@ -1,0 +1,5 @@
+{"Event":"SparkListenerLogStart","Spark Version":"3.5.1"}
+{"Event":"SparkListenerApplicationStart","App Name":"TruncatedApp","App ID":"app-trunc-0001","Timestamp":1700000000000}
+{"Event":"SparkListenerStageSubmitted","Stage Info":{"Stage ID":0,"Stage Attempt ID":0,"Stage Name":"truncated-stage","Number of Tasks":2,"Submission Time":1700000000200}}
+{"Event":"SparkListenerTaskEnd","Stage ID":0,"Stage Attempt ID":0,"Task Info":{"Task ID":0,"Index":0,"Attempt":0,"Launch Time":1700000000300,"Finish Time":1700000001300,"Failed":false},"Task Metrics":{"JVM GC Time":15,"Disk Bytes Spilled":0,"Input Metrics":{"Bytes Read":512}}}
+{"Event":"SparkListenerTaskEnd","Stage ID":0,"Task Info":{"Task ID":1

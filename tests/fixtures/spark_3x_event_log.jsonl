@@ -1,0 +1,7 @@
+{"Event":"SparkListenerLogStart","Spark Version":"3.5.1"}
+{"Event":"SparkListenerResourceProfileAdded","Resource Profile Id":0}
+{"Event":"SparkListenerApplicationStart","App Name":"ModernSpark3App","App ID":"app-3x-0001","Timestamp":1700000000000,"User":"spark"}
+{"Event":"SparkListenerStageSubmitted","Stage Info":{"Stage ID":0,"Stage Attempt ID":0,"Stage Name":"sql-agg","Number of Tasks":1,"Resource Profile Id":0,"Submission Time":1700000001000}}
+{"Event":"SparkListenerTaskEnd","Stage ID":0,"Stage Attempt ID":0,"Task Type":"ResultTask","Task End Reason":{"Reason":"Success"},"Task Info":{"Task ID":0,"Index":0,"Attempt":0,"Partition Id":0,"Launch Time":1700000001200,"Finish Time":1700000003200,"Failed":false},"Task Executor Metrics":{"JVMHeapMemory":1024},"Task Metrics":{"Executor Run Time":2000,"JVM GC Time":80,"Memory Bytes Spilled":512,"Disk Bytes Spilled":256,"Input Metrics":{"Bytes Read":4096},"Output Metrics":{"Bytes Written":2048},"Shuffle Read Metrics":{"Total Bytes Read":1200,"Remote Merged Blocks Fetched":2},"Shuffle Write Metrics":{"Shuffle Bytes Written":1500}}}
+{"Event":"SparkListenerStageCompleted","Stage Info":{"Stage ID":0,"Stage Attempt ID":0,"Stage Name":"sql-agg","Number of Tasks":1,"Resource Profile Id":0,"Submission Time":1700000001000,"Completion Time":1700000004000}}
+{"Event":"SparkListenerApplicationEnd","Timestamp":1700000005000,"ExitCode":0}

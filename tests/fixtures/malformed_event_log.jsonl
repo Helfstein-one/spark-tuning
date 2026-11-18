@@ -1,0 +1,7 @@
+{"Event":"SparkListenerLogStart","Spark Version":"3.5.1"}
+{"Event":"SparkListenerApplicationStart","App Name":"MalformedApp","App ID":"app-mal-0001","Timestamp":1700000000000}
+{"Event":"SparkListenerTaskEnd", bad_json
+[1, 2, 3]
+{"Event":"SparkListenerCustomVendorMetric","Value":42}
+{"Event":"SparkListenerTaskEnd","Stage ID":0,"Stage Attempt ID":0,"Task Info":{"Task ID":0,"Index":0,"Attempt":0,"Launch Time":1700000000100,"Finish Time":1700000001100,"Failed":false},"Task Metrics":{"JVM GC Time":20,"Disk Bytes Spilled":0,"Input Metrics":{"Bytes Read":100}}}
+{"Event":"SparkListenerApplicationEnd","Timestamp":1700000002000}
