@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import urllib.request
 import urllib.error
 from dataclasses import dataclass
@@ -21,7 +22,10 @@ def _safe_int(value: Any) -> int:
     if value is None or isinstance(value, bool):
         return 0
     if isinstance(value, (int, float)):
-        return int(value)
+        fval = float(value)
+        if not math.isfinite(fval) or fval < 0.0:
+            return 0
+        return int(fval)
     return 0
 
 

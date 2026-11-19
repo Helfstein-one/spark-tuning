@@ -17,7 +17,7 @@ class LoopEngine:
         if not spec.hypotheses:
             return self._finish(spec, RunState.BLOCKED, Decision.BLOCKED, iterations, "no hypotheses")
 
-        for number, hypothesis in enumerate(spec.hypotheses[: spec.max_iterations], start=1):
+        for number, hypothesis in enumerate(spec.hypotheses[: max(0, spec.max_iterations)], start=1):
             iteration = Iteration(number=number, hypothesis=str(hypothesis.get("id", number)))
             try:
                 metrics = self.runner.run(spec, number, hypothesis)

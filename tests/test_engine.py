@@ -85,6 +85,57 @@ class LoopEngineTests(unittest.TestCase):
             self.assertEqual(result.decision, Decision.BLOCKED)
             self.assertEqual(result.iterations[0].decision, Decision.INCONCLUSIVE)
 
+    def test_negative_max_iterations_rejected_and_zero_runs_none(self):
+        with self.assertRaises(ValueError):
+            RunSpec(
+                run_id="neg-iters",
+                skill="join-strategy",
+                objective="duration",
+                baseline=Metrics(100, 10, task_p95_seconds=10, spill_disk_bytes=0),
+                max_iterations=-1,
+                hypotheses=({"id": "h1", "metrics": {**Metrics(50, 5, task_p95_seconds=5, spill_disk_bytes=0).__dict__}},),
+            )
+
+        zero_spec = RunSpec(
+            run_id="zero-iters",
+            skill="join-strategy",
+            objective="duration",
+            baseline=Metrics(100, 10, task_p95_seconds=10, spill_disk_bytes=0),
+            max_iterations=0,
+            hypotheses=({"id": "h1", "metrics": {**Metrics(50, 5, task_p95_seconds=5, spill_disk_bytes=0).__dict__}},),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            result = LoopEngine(FixtureExperimentRunner(), JsonArtifactStore(directory)).run(zero_spec)
+            self.assertEqual(result.decision, Decision.BLOCKED)
+            self.assertEqual(len(result.iterations), 0)
+
+    def test_blocks_promotion_on_binary_and_negative_metric_event_logs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bin_log = Path(directory) / "binary.jsonl"
+            bin_log.write_bytes(b"\xff\xfe\x00\x80\n")
+            neg_log = Path(directory) / "negative.jsonl"
+            neg_log.write_text(
+                '{"Event":"SparkListenerApplicationStart","Timestamp":1000}\n'
+                '{"Event":"SparkListenerTaskEnd","Task Info":{"Launch Time":1100,"Finish Time":1500},"Task Metrics":{"Disk Bytes Spilled":2000}}\n'
+                '{"Event":"SparkListenerTaskEnd","Task Info":{"Launch Time":1200,"Finish Time":1600},"Task Metrics":{"Disk Bytes Spilled":-1500}}\n'
+                '{"Event":"SparkListenerApplicationEnd","Timestamp":5000}\n',
+                encoding="utf-8",
+            )
+            spec = RunSpec(
+                run_id="corrupt-logs",
+                skill="partition-sizing",
+                objective="duration",
+                baseline=Metrics(100, 10, task_p95_seconds=10, spill_disk_bytes=1024),
+                hypotheses=(
+                    {"id": "bin", "event_log": str(bin_log)},
+                    {"id": "neg", "event_log": str(neg_log)},
+                ),
+            )
+            result = LoopEngine(FixtureExperimentRunner(), JsonArtifactStore(directory)).run(spec)
+            self.assertEqual(result.decision, Decision.BLOCKED)
+            self.assertEqual(result.iterations[0].decision, Decision.INCONCLUSIVE)
+            self.assertEqual(result.iterations[1].decision, Decision.INCONCLUSIVE)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,6 @@
+import json
 import unittest
+from dataclasses import asdict
 
 from spark_tuning.evaluator import evaluate
 from spark_tuning.models import (
@@ -129,6 +131,174 @@ class EvaluatorGuardrailTests(unittest.TestCase):
         res = evaluate(spec, regressed)
         self.assertEqual(res.decision, Decision.ROLLBACK)
         self.assertIn("spill_disk_bytes", res.unassessed_guardrails)
+
+    def test_metric_values_validation_and_correctness_failures_guardrails(self):
+        with self.assertRaises(ValueError):
+            Metrics(
+                duration_seconds=None,
+                cost_usd=5.0,
+                task_p95_seconds=5.0,
+                spill_disk_bytes=0,
+                metric_values={"duration_seconds": MetricValue(-5.0, unit="seconds")},
+            )
+        with self.assertRaises(ValueError):
+            Metrics(
+                duration_seconds=50.0,
+                cost_usd=5.0,
+                task_p95_seconds=5.0,
+                spill_disk_bytes=0,
+                metric_values={"correctness": MetricValue(2, unit="bool")},
+            )
+
+        spec = self._complete_spec()
+
+        cand_fail_mv = Metrics(
+            duration_seconds=50.0,
+            cost_usd=5.0,
+            task_p95_seconds=5.0,
+            spill_disk_bytes=0,
+            workload_id="wl-a",
+            failures=0,
+            metric_values={"failures": MetricValue(5, unit="count")},
+        )
+        self.assertEqual(evaluate(spec, cand_fail_mv).decision, Decision.ROLLBACK)
+
+        cand_corr_zero_mv = Metrics(
+            duration_seconds=50.0,
+            cost_usd=5.0,
+            task_p95_seconds=5.0,
+            spill_disk_bytes=0,
+            workload_id="wl-a",
+            correctness=True,
+            metric_values={"correctness": MetricValue(0, unit="bool")},
+        )
+        self.assertEqual(evaluate(spec, cand_corr_zero_mv).decision, Decision.ROLLBACK)
+
+        cand_corr_unknown_mv = Metrics(
+            duration_seconds=50.0,
+            cost_usd=5.0,
+            task_p95_seconds=5.0,
+            spill_disk_bytes=0,
+            workload_id="wl-a",
+            correctness=True,
+            metric_values={"correctness": MetricValue.unknown(unit="bool")},
+        )
+        self.assertEqual(evaluate(spec, cand_corr_unknown_mv).decision, Decision.INCONCLUSIVE)
+
+        base_fail_spec = RunSpec(
+            run_id="base-fail-mv",
+            skill="join-strategy",
+            objective="duration",
+            baseline=Metrics(
+                duration_seconds=100.0,
+                cost_usd=10.0,
+                task_p95_seconds=10.0,
+                spill_disk_bytes=1024,
+                workload_id="wl-a",
+                failures=0,
+                metric_values={"failures": MetricValue(3, unit="count")},
+            ),
+        )
+        good_cand = Metrics(50.0, 5.0, task_p95_seconds=5.0, spill_disk_bytes=0, workload_id="wl-a")
+        self.assertEqual(evaluate(base_fail_spec, good_cand).decision, Decision.INCONCLUSIVE)
+
+        base_corr_spec = RunSpec(
+            run_id="base-corr-mv",
+            skill="join-strategy",
+            objective="duration",
+            baseline=Metrics(
+                duration_seconds=100.0,
+                cost_usd=10.0,
+                task_p95_seconds=10.0,
+                spill_disk_bytes=1024,
+                workload_id="wl-a",
+                correctness=True,
+                metric_values={"correctness": MetricValue(0, unit="bool")},
+            ),
+        )
+        self.assertEqual(evaluate(base_corr_spec, good_cand).decision, Decision.INCONCLUSIVE)
+
+    def test_zero_baseline_regression_never_accepts_and_is_strict_json(self):
+        spec_zero_dur = RunSpec(
+            run_id="zero-dur",
+            skill="join-strategy",
+            objective="duration",
+            baseline=Metrics(
+                duration_seconds=0.0,
+                cost_usd=50.0,
+                task_p95_seconds=0.0,
+                spill_disk_bytes=0,
+            ),
+        )
+        regressed_dur = Metrics(
+            duration_seconds=100.0,
+            cost_usd=25.0,
+            task_p95_seconds=0.0,
+            spill_disk_bytes=0,
+        )
+        ev = evaluate(spec_zero_dur, regressed_dur)
+        self.assertNotEqual(ev.decision, Decision.ACCEPT)
+        self.assertEqual(ev.decision, Decision.ROLLBACK)
+        self.assertIsNone(ev.deltas["duration_seconds"])
+        serialized = json.dumps(asdict(ev), allow_nan=False)
+        self.assertNotIn("Infinity", serialized)
+
+        still_zero_dur = Metrics(
+            duration_seconds=0.0,
+            cost_usd=25.0,
+            task_p95_seconds=0.0,
+            spill_disk_bytes=0,
+        )
+        ev_pass = evaluate(spec_zero_dur, still_zero_dur)
+        self.assertEqual(ev_pass.decision, Decision.ACCEPT)
+        self.assertEqual(ev_pass.deltas["duration_seconds"], 0.0)
+
+        p95_zero_reg = Metrics(
+            duration_seconds=0.0,
+            cost_usd=25.0,
+            task_p95_seconds=1.0,
+            spill_disk_bytes=0,
+        )
+        ev_p95 = evaluate(spec_zero_dur, p95_zero_reg)
+        self.assertEqual(ev_p95.decision, Decision.ROLLBACK)
+        self.assertIsNone(ev_p95.deltas["task_p95_seconds"])
+
+    def test_empty_unit_on_canonical_metric_rejected(self):
+        spec = self._complete_spec()
+        empty_unit_cand = Metrics(
+            duration_seconds=None,
+            cost_usd=5.0,
+            task_p95_seconds=5.0,
+            spill_disk_bytes=0,
+            workload_id="wl-a",
+            metric_values={"duration_seconds": MetricValue(50.0, unit="")},
+        )
+        res = evaluate(spec, empty_unit_cand)
+        self.assertEqual(res.decision, Decision.INCONCLUSIVE)
+        self.assertIn("duration_seconds", res.unassessed_guardrails)
+
+        both_empty_spec = RunSpec(
+            run_id="both-empty",
+            skill="join-strategy",
+            objective="duration",
+            baseline=Metrics(
+                duration_seconds=None,
+                cost_usd=10.0,
+                task_p95_seconds=10.0,
+                spill_disk_bytes=1024,
+                metric_values={"duration_seconds": MetricValue(100.0, unit="")},
+            ),
+        )
+        both_empty_cand = Metrics(
+            duration_seconds=None,
+            cost_usd=5.0,
+            task_p95_seconds=5.0,
+            spill_disk_bytes=0,
+            metric_values={"duration_seconds": MetricValue(50.0, unit="")},
+        )
+        res_both = evaluate(both_empty_spec, both_empty_cand)
+        self.assertEqual(res_both.decision, Decision.INCONCLUSIVE)
+        self.assertIn("duration_seconds", res_both.unassessed_guardrails)
 
 
 if __name__ == "__main__":

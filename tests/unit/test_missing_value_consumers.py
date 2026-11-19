@@ -2,8 +2,9 @@ import unittest
 
 from spark_tuning.diagnostics.engine import BottleneckCategory, BottleneckDiagnosisEngine
 from spark_tuning.evaluation.pareto import ParetoDecisionEngine
+from spark_tuning.evaluation.statistics import BenchmarkOutcome, StatisticalBenchmarkComparator
 from spark_tuning.experimentation.harness import ExperimentationHarness, TrialSpec
-from spark_tuning.models import Decision, Iteration, LoopResult, Metrics, MetricValue, RunState
+from spark_tuning.models import Decision, Iteration, LoopResult, Metrics, MetricValue, ParseDiagnostics, RunState
 from spark_tuning.reporting.dashboard import InteractiveDashboardGenerator
 from spark_tuning.reporting.report_generator import OptimizationReportGenerator
 from spark_tuning.safety.quality_gate import DataQualityGate, QualityCheckStatus
@@ -121,6 +122,97 @@ class MissingValueConsumersTests(unittest.TestCase):
         m = Metrics(duration_seconds=None, cost_usd=None, gc_seconds=1.0, task_p95_seconds=2.0, tasks_count=4)
         diag = BottleneckDiagnosisEngine.diagnose(m)
         self.assertEqual(diag.primary_cause, BottleneckCategory.UNKNOWN)
+
+    def test_harness_and_statistics_handle_none_durations_correctness_and_mixed_spill(self):
+        spec = TrialSpec("t-missing", "partition-sizing", "wl")
+        base_runs = [Metrics(100.0, 10.0, spill_disk_bytes=1024)]
+
+        comp_none = StatisticalBenchmarkComparator.compare(
+            base_runs,
+            [Metrics(duration_seconds=None, cost_usd=None, spill_disk_bytes=0)],
+        )
+        self.assertEqual(comp_none.outcome, BenchmarkOutcome.INCONCLUSIVE)
+        self.assertFalse(comp_none.statistically_significant)
+
+        rep_none = ExperimentationHarness.evaluate_trial(
+            spec,
+            base_runs,
+            [Metrics(duration_seconds=None, cost_usd=None, spill_disk_bytes=0)],
+            {"row_count": 100, "checksum": "x"},
+            {"row_count": 100, "checksum": "x"},
+        )
+        self.assertEqual(rep_none.statistical_comparison.outcome, BenchmarkOutcome.INCONCLUSIVE)
+        self.assertFalse(rep_none.scorecard.is_pareto_optimal)
+
+        rep_bad_corr = ExperimentationHarness.evaluate_trial(
+            spec,
+            base_runs,
+            [Metrics(50.0, 2.5, spill_disk_bytes=0, correctness=False)],
+            {"row_count": 100, "checksum": "x"},
+            {"row_count": 100, "checksum": "x"},
+        )
+        self.assertFalse(rep_bad_corr.scorecard.is_pareto_optimal)
+        self.assertFalse(rep_bad_corr.scorecard.quality_preserved)
+
+        rep_unk_corr = ExperimentationHarness.evaluate_trial(
+            spec,
+            base_runs,
+            [Metrics(50.0, 2.5, spill_disk_bytes=0, correctness=None)],
+            {"row_count": 100, "checksum": "x"},
+            {"row_count": 100, "checksum": "x"},
+        )
+        self.assertFalse(rep_unk_corr.scorecard.is_pareto_optimal)
+        self.assertFalse(rep_unk_corr.scorecard.quality_preserved)
+
+        rep_mixed_spill = ExperimentationHarness.evaluate_trial(
+            spec,
+            base_runs,
+            [
+                Metrics(50.0, 2.5, spill_disk_bytes=0),
+                Metrics(50.0, 2.5, spill_disk_bytes=500000),
+            ],
+            {"row_count": 100, "checksum": "x"},
+            {"row_count": 100, "checksum": "x"},
+        )
+        self.assertFalse(rep_mixed_spill.scorecard.spill_eliminated)
+
+    def test_pareto_rejects_unit_mismatches_and_incomplete_diagnostics(self):
+        base = Metrics(100.0, 10.0, spill_disk_bytes=100)
+        unit_bad = Metrics(50.0, 5.0, spill_disk_bytes=0, units={"duration_seconds": "ms"})
+        diag_bad = Metrics(
+            50.0,
+            5.0,
+            spill_disk_bytes=0,
+            parse_diagnostics=ParseDiagnostics(is_complete=False, truncated=True),
+        )
+        self.assertFalse(ParetoDecisionEngine.dominates(unit_bad, base))
+        self.assertFalse(ParetoDecisionEngine.dominates(diag_bad, base))
+
+        frontier = ParetoDecisionEngine.compute_frontier(
+            base,
+            {"unit_bad": unit_bad, "diag_bad": diag_bad},
+        )
+        by_id = {c.candidate_id: c for c in frontier}
+        self.assertFalse(by_id["unit_bad"].is_pareto_optimal)
+        self.assertIn("duration_seconds", by_id["unit_bad"].unassessed_dimensions)
+        self.assertFalse(by_id["diag_bad"].is_pareto_optimal)
+        self.assertIn("parse_diagnostics", by_id["diag_bad"].unassessed_dimensions)
+
+    def test_quality_gate_rejects_bool_and_negative_row_counts(self):
+        rep_bool = DataQualityGate.evaluate(
+            {"row_count": True, "checksum": "x"},
+            {"row_count": 1, "checksum": "x"},
+        )
+        self.assertFalse(rep_bool.passed)
+        self.assertTrue(
+            any(c.check_name == "row_count" and c.status == QualityCheckStatus.FAILED for c in rep_bool.checks)
+        )
+
+        rep_neg = DataQualityGate.evaluate(
+            {"row_count": -1, "checksum": "x"},
+            {"row_count": -1, "checksum": "x"},
+        )
+        self.assertFalse(rep_neg.passed)
 
 
 if __name__ == "__main__":

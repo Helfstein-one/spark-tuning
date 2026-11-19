@@ -28,6 +28,20 @@ def _metric_num(metrics: Metrics, field_name: str) -> float | int | None:
     return val if math.isfinite(float(val)) else None
 
 
+def _correctness_bool(metrics: Metrics) -> bool | None:
+    if hasattr(metrics, "get_metric"):
+        mv = metrics.get_metric("correctness")
+        if not mv.is_usable:
+            return None
+        return float(mv.value) != 0.0  # type: ignore[arg-type]
+    return getattr(metrics, "correctness", None)
+
+
+def _has_incomplete_diagnostics(metrics: Metrics) -> bool:
+    diag = getattr(metrics, "parse_diagnostics", None)
+    return diag is not None and not diag.is_complete
+
+
 class ParetoDecisionEngine:
     """Evaluates multi-objective trade-offs (e.g. Duration vs Cost vs Spill vs GC)."""
 
@@ -37,7 +51,14 @@ class ParetoDecisionEngine:
     @classmethod
     def dominates(cls, a: Metrics, b: Metrics) -> bool:
         """Returns True if candidate 'a' dominates 'b' (better or equal in all, strictly better in at least one)."""
-        if a.correctness is not True or b.correctness is None:
+        if _has_incomplete_diagnostics(a) or _has_incomplete_diagnostics(b):
+            return False
+        if hasattr(a, "validate_comparable") and a.validate_comparable(b):
+            return False
+
+        a_corr = _correctness_bool(a)
+        b_corr = _correctness_bool(b)
+        if a_corr is not True or b_corr is None:
             return False
 
         a_dur = _metric_num(a, "duration_seconds")
@@ -52,14 +73,14 @@ class ParetoDecisionEngine:
 
         if a_dur > b_dur or a_cost > b_cost or a_fail > b_fail:  # type: ignore[operator]
             return False
-        if int(a.correctness) < int(b.correctness):
+        if int(a_corr) < int(b_corr):
             return False
 
         strictly_better = (
             a_dur < b_dur  # type: ignore[operator]
             or a_cost < b_cost  # type: ignore[operator]
             or a_fail < b_fail  # type: ignore[operator]
-            or (a.correctness and not b.correctness)
+            or (a_corr and not b_corr)
         )
 
         # Optional objectives: symmetric None is neutral; asymmetric None blocks dominance.
@@ -94,26 +115,56 @@ class ParetoDecisionEngine:
 
         base_dur = _metric_num(baseline, "duration_seconds")
         base_cost = _metric_num(baseline, "cost_usd")
+        base_incomplete = _has_incomplete_diagnostics(baseline)
 
         for cand_id, cand_metric in candidates.items():
             unassessed: list[str] = []
             for req_field in cls._REQUIRED_OBJECTIVES:
                 if _metric_num(cand_metric, req_field) is None:
                     unassessed.append(req_field)
-            if cand_metric.correctness is None:
+            cand_corr = _correctness_bool(cand_metric)
+            if cand_corr is None:
                 unassessed.append("correctness")
             for opt_field in cls._OPTIONAL_OBJECTIVES:
                 if opt_field in measured_optional and _metric_num(cand_metric, opt_field) is None:
                     unassessed.append(opt_field)
 
-            unassessed_tuple = tuple(unassessed)
-            if cand_metric.correctness is not True:
+            comp_errors = baseline.validate_comparable(cand_metric) if hasattr(baseline, "validate_comparable") else []
+            for err in comp_errors:
+                matched = False
+                for known_field in (*cls._REQUIRED_OBJECTIVES, *cls._OPTIONAL_OBJECTIVES, "correctness"):
+                    if f"'{known_field}'" in err:
+                        unassessed.append(known_field)
+                        matched = True
+                if "workload_id" in err:
+                    unassessed.append("workload_id")
+                    matched = True
+                if not matched:
+                    unassessed.append("comparability")
+
+            cand_incomplete = _has_incomplete_diagnostics(cand_metric)
+            if cand_incomplete or base_incomplete:
+                unassessed.append("parse_diagnostics")
+
+            unassessed_tuple = tuple(dict.fromkeys(unassessed))
+            if cand_corr is not True:
                 is_optimal = False
                 notes = (
                     "Ineligible: correctness gate failed"
-                    if cand_metric.correctness is False
+                    if cand_corr is False
                     else "Ineligible: correctness status unknown"
                 )
+            elif cand_incomplete:
+                is_optimal = False
+                diag = getattr(cand_metric, "parse_diagnostics", None)
+                detail = "; ".join(diag.warnings) if diag and diag.warnings else "incomplete event-log parse"
+                notes = f"Ineligible: incomplete parse diagnostics ({detail})"
+            elif base_incomplete:
+                is_optimal = False
+                notes = "Incomparable: baseline event-log parse is incomplete"
+            elif comp_errors:
+                is_optimal = False
+                notes = f"Incomparable: {'; '.join(comp_errors)}"
             elif unassessed_tuple:
                 is_optimal = False
                 notes = f"Incomparable: missing telemetry ({', '.join(unassessed_tuple)})"

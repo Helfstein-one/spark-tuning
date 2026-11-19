@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -39,6 +40,15 @@ def _is_missing(value: Any) -> bool:
     return False
 
 
+def _is_valid_row_count(value: Any) -> bool:
+    if value is None or isinstance(value, bool):
+        return False
+    if not isinstance(value, (int, float)):
+        return False
+    fval = float(value)
+    return math.isfinite(fval) and fval >= 0.0
+
+
 class DataQualityGate:
     """Verifies schema, row count, checksum, NULLs and completeness."""
 
@@ -64,6 +74,16 @@ class DataQualityGate:
                     expected=base_rows,
                     observed=cand_rows,
                     details="Missing row count evidence",
+                )
+            )
+        elif not _is_valid_row_count(base_rows) or not _is_valid_row_count(cand_rows):
+            checks.append(
+                QualityCheckResult(
+                    check_name="row_count",
+                    status=QualityCheckStatus.FAILED,
+                    expected=base_rows,
+                    observed=cand_rows,
+                    details=f"Invalid row count evidence: expected {base_rows!r}, got {cand_rows!r}",
                 )
             )
         elif base_rows != cand_rows:

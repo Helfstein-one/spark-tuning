@@ -73,31 +73,98 @@ class ExperimentationHarness:
         quality_rep = DataQualityGate.evaluate(baseline_quality_meta, candidate_quality_meta)
 
         # 3. Pareto frontier
+        def _usable_num(m: Metrics, field_name: str) -> float | int | None:
+            mv = m.get_metric(field_name)
+            return mv.value if mv.is_usable else None
+
+        def _agg_correctness(runs: List[Metrics], gate_passed: bool | None = None) -> bool | None:
+            saw_unknown = False
+            if gate_passed is False:
+                return False
+            if gate_passed is None:
+                pass
+            for run in runs:
+                mv = run.get_metric("correctness")
+                if not mv.is_usable:
+                    saw_unknown = True
+                elif float(mv.value) == 0.0:  # type: ignore[arg-type]
+                    return False
+            return None if saw_unknown else True
+
+        cand_fail_vals = [_usable_num(m, "failures") for m in candidate_runs]
+        base_fail_vals = [_usable_num(m, "failures") for m in baseline_runs]
         cand_failures = (
-            sum(m.failures for m in candidate_runs)
-            if all(m.failures is not None for m in candidate_runs)
+            sum(int(v) for v in cand_fail_vals if v is not None)
+            if all(v is not None for v in cand_fail_vals)
             else None
         )
         base_failures = (
-            sum(m.failures for m in baseline_runs)
-            if all(m.failures is not None for m in baseline_runs)
+            sum(int(v) for v in base_fail_vals if v is not None)
+            if all(v is not None for v in base_fail_vals)
             else None
         )
+
+        cand_durs_usable = all(_usable_num(m, "duration_seconds") is not None for m in candidate_runs)
+        base_durs_usable = all(_usable_num(m, "duration_seconds") is not None for m in baseline_runs)
+        cand_dur = stat_comp.candidate_summary.median if cand_durs_usable else None
+        base_dur = stat_comp.baseline_summary.median if base_durs_usable else None
+        cand_cost = round(cand_dur * spec.cost_per_second_usd, 4) if cand_dur is not None else None
+        base_cost = round(base_dur * spec.cost_per_second_usd, 4) if base_dur is not None else None
+
+        cand_spill_vals = [_usable_num(m, "spill_disk_bytes") for m in candidate_runs]
+        base_spill_vals = [_usable_num(m, "spill_disk_bytes") for m in baseline_runs]
+        cand_spill = (
+            max(int(v) for v in cand_spill_vals if v is not None)
+            if all(v is not None for v in cand_spill_vals)
+            else None
+        )
+        base_spill = (
+            max(int(v) for v in base_spill_vals if v is not None)
+            if all(v is not None for v in base_spill_vals)
+            else None
+        )
+
+        cand_gc_vals = [_usable_num(m, "gc_seconds") for m in candidate_runs]
+        base_gc_vals = [_usable_num(m, "gc_seconds") for m in baseline_runs]
+        cand_gc = (
+            max(float(v) for v in cand_gc_vals if v is not None)
+            if all(v is not None for v in cand_gc_vals)
+            else None
+        )
+        base_gc = (
+            max(float(v) for v in base_gc_vals if v is not None)
+            if all(v is not None for v in base_gc_vals)
+            else None
+        )
+
+        cand_correctness = _agg_correctness(candidate_runs, gate_passed=quality_rep.passed)
+        base_correctness = _agg_correctness(baseline_runs)
+        cand_incomplete_diag = next(
+            (m.parse_diagnostics for m in candidate_runs if m.parse_diagnostics is not None and not m.parse_diagnostics.is_complete),
+            None,
+        )
+        base_incomplete_diag = next(
+            (m.parse_diagnostics for m in baseline_runs if m.parse_diagnostics is not None and not m.parse_diagnostics.is_complete),
+            None,
+        )
+
         cand_median_metric = Metrics(
-            duration_seconds=stat_comp.candidate_summary.median,
-            cost_usd=round(stat_comp.candidate_summary.median * spec.cost_per_second_usd, 4),
-            spill_disk_bytes=candidate_runs[0].spill_disk_bytes,
-            gc_seconds=candidate_runs[0].gc_seconds,
+            duration_seconds=cand_dur,
+            cost_usd=cand_cost,
+            spill_disk_bytes=cand_spill,
+            gc_seconds=cand_gc,
             failures=cand_failures,
-            correctness=quality_rep.passed,
+            correctness=cand_correctness,
+            parse_diagnostics=cand_incomplete_diag,
         )
         base_median_metric = Metrics(
-            duration_seconds=stat_comp.baseline_summary.median,
-            cost_usd=round(stat_comp.baseline_summary.median * spec.cost_per_second_usd, 4),
-            spill_disk_bytes=baseline_runs[0].spill_disk_bytes,
-            gc_seconds=baseline_runs[0].gc_seconds,
+            duration_seconds=base_dur,
+            cost_usd=base_cost,
+            spill_disk_bytes=base_spill,
+            gc_seconds=base_gc,
             failures=base_failures,
-            correctness=True,
+            correctness=base_correctness,
+            parse_diagnostics=base_incomplete_diag,
         )
 
         frontier = ParetoDecisionEngine.compute_frontier(
@@ -116,20 +183,22 @@ class ExperimentationHarness:
             else 0.0
         )
 
-        base_spill = baseline_runs[0].spill_disk_bytes
-        cand_spill = candidate_runs[0].spill_disk_bytes
         spill_eliminated = (
-            base_spill is not None
-            and cand_spill is not None
-            and base_spill > 0
-            and cand_spill == 0
+            all(v is not None for v in base_spill_vals)
+            and any(v > 0 for v in base_spill_vals if v is not None)
+            and all(v is not None and v == 0 for v in cand_spill_vals)
         )
 
-        quality_text = (
-            "with 100% data quality preservation."
-            if quality_rep.passed
-            else f"but data quality gate failed ({quality_rep.reason})."
-        )
+        cand_runs_correct = _agg_correctness(candidate_runs)
+        quality_preserved = bool(quality_rep.passed and cand_runs_correct is True)
+        if not quality_rep.passed:
+            quality_text = f"but data quality gate failed ({quality_rep.reason})."
+        elif cand_runs_correct is False:
+            quality_text = "but candidate correctness gate failed."
+        elif cand_runs_correct is None:
+            quality_text = "but candidate correctness status is unknown."
+        else:
+            quality_text = "with 100% data quality preservation."
 
         scorecard = SkillScorecard(
             skill_name=spec.skill_name,
@@ -137,7 +206,7 @@ class ExperimentationHarness:
             duration_improvement_pct=dur_pct,
             cost_improvement_pct=cost_pct,
             spill_eliminated=spill_eliminated,
-            quality_preserved=quality_rep.passed,
+            quality_preserved=quality_preserved,
             is_pareto_optimal=is_pareto,
             statistically_significant=stat_comp.statistically_significant,
             summary=(

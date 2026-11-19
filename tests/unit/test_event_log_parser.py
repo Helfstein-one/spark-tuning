@@ -4,7 +4,7 @@ from pathlib import Path
 
 from spark_tuning.adapters import SparkEventLogParser
 from spark_tuning.evaluator import evaluate
-from spark_tuning.models import Decision, Metrics, RunSpec
+from spark_tuning.models import Decision, Metrics, MetricStatus, RunSpec
 from spark_tuning.runners.live_monitor import SparkLiveMonitor
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures"
@@ -151,6 +151,108 @@ class EventLogParserHardeningTests(unittest.TestCase):
         monitor = SparkLiveMonitor()
         dec = monitor.evaluate_live_stage_metrics(
             {"diskBytesSpilled": None, "memoryBytesSpilled": None, "jvmGcTime": None},
+            elapsed_seconds=20.0,
+        )
+        self.assertFalse(dec.should_abort)
+        self.assertEqual(dec.observed_spill_bytes, 0)
+        self.assertEqual(dec.observed_gc_ms, 0)
+
+    def test_binary_and_non_utf8_logs_return_incomplete_without_crashing(self):
+        spec = self._baseline_spec()
+        with tempfile.TemporaryDirectory() as tmp:
+            pure_bin = Path(tmp) / "pure.bin"
+            pure_bin.write_bytes(b"\xff\xfe\x00\x80\x81\x90\xde\xad\xbe\xef")
+            m_bin, d_bin = SparkEventLogParser.parse_with_diagnostics(pure_bin)
+            self.assertEqual(d_bin.total_lines, 1)
+            self.assertEqual(d_bin.invalid_json_lines, 1)
+            self.assertFalse(d_bin.is_complete)
+            self.assertEqual(d_bin.completeness_score, 0.0)
+            self.assertEqual(evaluate(spec, m_bin).decision, Decision.INCONCLUSIVE)
+
+            mixed = Path(tmp) / "mixed.jsonl"
+            mixed.write_bytes(
+                b'{"Event":"SparkListenerApplicationStart","Timestamp":1000}\n'
+                b'{"Event":"SparkListenerTaskEnd","Task Info":{"Launch Time":1100,"Finish Time":1500},"Task Metrics":{"Disk Bytes Spilled":0}}\n'
+                b'\xff\xfe bad utf8 line\n'
+                b'{"Event":"SparkListenerApplicationEnd","Timestamp":5000}\n'
+            )
+            m_mix, d_mix = SparkEventLogParser.parse_with_diagnostics(mixed)
+            self.assertEqual(d_mix.total_lines, 4)
+            self.assertEqual(d_mix.valid_events, 3)
+            self.assertEqual(d_mix.invalid_json_lines, 1)
+            self.assertFalse(d_mix.is_complete)
+            self.assertLess(d_mix.completeness_score, 1.0)
+            self.assertEqual(evaluate(spec, m_mix).decision, Decision.INCONCLUSIVE)
+
+    def test_negative_metrics_and_timestamps_quarantined_and_never_accept(self):
+        spec = self._baseline_spec()
+        with tempfile.TemporaryDirectory() as tmp:
+            neg_single = Path(tmp) / "neg_single.jsonl"
+            neg_single.write_text(
+                '{"Event":"SparkListenerApplicationStart","Timestamp":1000}\n'
+                '{"Event":"SparkListenerTaskEnd","Task Info":{"Launch Time":1100,"Finish Time":1500},"Task Metrics":{"Disk Bytes Spilled":-100,"JVM GC Time":-50}}\n'
+                '{"Event":"SparkListenerApplicationEnd","Timestamp":5000}\n',
+                encoding="utf-8",
+            )
+            m_single, d_single = SparkEventLogParser.parse_with_diagnostics(neg_single)
+            self.assertFalse(d_single.is_complete)
+            self.assertLess(d_single.completeness_score, 1.0)
+            self.assertIsNone(m_single.spill_disk_bytes)
+            self.assertIsNone(m_single.gc_seconds)
+            self.assertEqual(m_single.get_metric("spill_disk_bytes").status, MetricStatus.INVALID)
+            self.assertEqual(m_single.get_metric("gc_seconds").status, MetricStatus.INVALID)
+            self.assertEqual(evaluate(spec, m_single).decision, Decision.INCONCLUSIVE)
+
+            neg_cancel = Path(tmp) / "neg_cancel.jsonl"
+            neg_cancel.write_text(
+                '{"Event":"SparkListenerApplicationStart","Timestamp":1000}\n'
+                '{"Event":"SparkListenerTaskEnd","Task Info":{"Launch Time":1100,"Finish Time":1500},"Task Metrics":{"Disk Bytes Spilled":2000}}\n'
+                '{"Event":"SparkListenerTaskEnd","Task Info":{"Launch Time":1200,"Finish Time":1600},"Task Metrics":{"Disk Bytes Spilled":-1500}}\n'
+                '{"Event":"SparkListenerApplicationEnd","Timestamp":5000}\n',
+                encoding="utf-8",
+            )
+            m_cancel, d_cancel = SparkEventLogParser.parse_with_diagnostics(neg_cancel)
+            self.assertEqual(m_cancel.spill_disk_bytes, 2000)
+            self.assertFalse(d_cancel.is_complete)
+            self.assertEqual(m_cancel.get_metric("spill_disk_bytes").status, MetricStatus.INVALID)
+            self.assertEqual(evaluate(spec, m_cancel).decision, Decision.INCONCLUSIVE)
+
+            neg_ts = Path(tmp) / "neg_ts.jsonl"
+            neg_ts.write_text(
+                '{"Event":"SparkListenerApplicationStart","Timestamp":-5000}\n'
+                '{"Event":"SparkListenerTaskEnd","Task Info":{"Launch Time":-4000,"Finish Time":-2000},"Task Metrics":{"Disk Bytes Spilled":0}}\n'
+                '{"Event":"SparkListenerApplicationEnd","Timestamp":-1000}\n',
+                encoding="utf-8",
+            )
+            m_ts, d_ts = SparkEventLogParser.parse_with_diagnostics(neg_ts)
+            self.assertIsNone(m_ts.duration_seconds)
+            self.assertIsNone(m_ts.task_p95_seconds)
+            self.assertFalse(d_ts.is_complete)
+            self.assertEqual(evaluate(spec, m_ts).decision, Decision.INCONCLUSIVE)
+
+    def test_job_end_job_failed_triggers_rollback(self):
+        spec = self._baseline_spec()
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "job_failed.jsonl"
+            log.write_text(
+                '{"Event":"SparkListenerApplicationStart","Timestamp":1000}\n'
+                '{"Event":"SparkListenerJobEnd","Job ID":0,"Job Result":{"Result":"JobFailed","Exception":{"Message":"Stage failed"}}}\n'
+                '{"Event":"SparkListenerApplicationEnd","Timestamp":5000}\n',
+                encoding="utf-8",
+            )
+            metrics, _ = SparkEventLogParser.parse_with_diagnostics(log)
+            self.assertGreaterEqual(metrics.failures, 1)
+            self.assertFalse(metrics.correctness)
+            self.assertEqual(evaluate(spec, metrics).decision, Decision.ROLLBACK)
+
+    def test_live_monitor_handles_nan_inf_and_negative_values(self):
+        monitor = SparkLiveMonitor()
+        dec = monitor.evaluate_live_stage_metrics(
+            {
+                "diskBytesSpilled": float("nan"),
+                "memoryBytesSpilled": float("inf"),
+                "jvmGcTime": -5000,
+            },
             elapsed_seconds=20.0,
         )
         self.assertFalse(dec.should_abort)

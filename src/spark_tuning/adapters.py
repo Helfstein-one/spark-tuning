@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .models import Metrics, ParseDiagnostics, RunSpec
+from .models import CANONICAL_UNITS, Metrics, MetricValue, ParseDiagnostics, RunSpec
 
 
 class JsonArtifactStore:
@@ -40,6 +40,27 @@ def _first_number(mapping: Any, *keys: str) -> int | float | None:
             ):
                 return val
     return None
+
+
+def _extract_nonneg_number(
+    mapping: Any,
+    *keys: str,
+) -> tuple[int | float | None, tuple[str, int | float] | None]:
+    if not isinstance(mapping, dict):
+        return None, None
+    for key in keys:
+        if key in mapping:
+            val = mapping[key]
+            if (
+                val is not None
+                and not isinstance(val, bool)
+                and isinstance(val, (int, float))
+                and math.isfinite(float(val))
+            ):
+                if float(val) < 0.0:
+                    return None, (key, val)
+                return val, None
+    return None, None
 
 
 def _add_opt_int(total: int | None, delta: int | float | None) -> int | None:
@@ -114,6 +135,8 @@ class SparkEventLogParser:
         invalid_json_lines = 0
         unknown_events = 0
         last_nonempty_line_invalid = False
+        has_corrupted_metrics = False
+        corrupted_metrics: set[str] = set()
         warnings: list[str] = []
 
         # Absent task metric categories stay None rather than silently coercing to 0
@@ -126,12 +149,20 @@ class SparkEventLogParser:
         spill_disk_bytes_total: int | None = None
         spill_mem_bytes_total: int | None = None
 
-        with open(path, "r", encoding="utf-8") as f:
-            for line_no, raw_line in enumerate(f, start=1):
-                line = raw_line.strip()
-                if not line:
+        with open(path, "rb") as f:
+            for line_no, raw_bytes in enumerate(f, start=1):
+                stripped_bytes = raw_bytes.strip()
+                if not stripped_bytes:
                     continue
                 total_lines += 1
+
+                try:
+                    line = stripped_bytes.decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    invalid_json_lines += 1
+                    last_nonempty_line_invalid = True
+                    warnings.append(f"Line {line_no}: invalid UTF-8 bytes ({exc.reason})")
+                    continue
 
                 try:
                     event = json.loads(line)
@@ -188,14 +219,26 @@ class SparkEventLogParser:
                     if isinstance(exec_info, dict) and "Resource Profile Id" in exec_info:
                         saw_3x_marker = True
                 elif event_type == "SparkListenerApplicationStart":
-                    ts = _first_number(event, "Timestamp", "Time")
-                    if ts is not None:
+                    ts, neg_ts = _extract_nonneg_number(event, "Timestamp", "Time")
+                    if neg_ts is not None:
+                        has_corrupted_metrics = True
+                        corrupted_metrics.update(("duration_seconds", "cost_usd"))
+                        warnings.append(
+                            f"Line {line_no}: negative timestamp {neg_ts[0]}={neg_ts[1]} in SparkListenerApplicationStart"
+                        )
+                    elif ts is not None:
                         app_start_time = ts
                     if "Timestamp" not in event and "Time" in event:
                         saw_4x_marker = True
                 elif event_type == "SparkListenerApplicationEnd":
-                    ts = _first_number(event, "Timestamp", "Time")
-                    if ts is not None:
+                    ts, neg_ts = _extract_nonneg_number(event, "Timestamp", "Time")
+                    if neg_ts is not None:
+                        has_corrupted_metrics = True
+                        corrupted_metrics.update(("duration_seconds", "cost_usd"))
+                        warnings.append(
+                            f"Line {line_no}: negative timestamp {neg_ts[0]}={neg_ts[1]} in SparkListenerApplicationEnd"
+                        )
+                    elif ts is not None:
                         app_end_time = ts
                     if "Timestamp" not in event and "Time" in event:
                         saw_4x_marker = True
@@ -205,6 +248,15 @@ class SparkEventLogParser:
                         warnings.append(
                             f"Line {line_no}: SparkListenerApplicationEnd reported ExitCode={exit_code}"
                         )
+                elif event_type == "SparkListenerJobEnd":
+                    job_result = event.get("Job Result")
+                    if isinstance(job_result, dict) and "Result" in job_result:
+                        result_val = job_result.get("Result")
+                        if result_val != "JobSucceeded":
+                            failures += 1
+                            warnings.append(
+                                f"Line {line_no}: SparkListenerJobEnd reported Result={result_val!r}"
+                            )
                 elif event_type == "SparkListenerStageSubmitted":
                     stages_submitted += 1
                     stage_info = event.get("Stage Info")
@@ -224,16 +276,36 @@ class SparkEventLogParser:
                     if isinstance(task_info, dict):
                         if "Partition Id" in task_info:
                             saw_3x_marker = True
-                        attempt = _first_number(task_info, "Attempt")
-                        if attempt is not None and attempt > 0:
+                        attempt, neg_attempt = _extract_nonneg_number(task_info, "Attempt")
+                        if neg_attempt is not None:
+                            has_corrupted_metrics = True
+                            corrupted_metrics.add("task_retries")
+                            warnings.append(
+                                f"Line {line_no}: negative task Attempt={neg_attempt[1]} ignored"
+                            )
+                        elif attempt is not None and attempt > 0:
                             task_retries += 1
                         if task_info.get("Failed") is True:
                             failures += 1
 
-                        launch_time = _first_number(task_info, "Launch Time")
-                        finish_time = _first_number(task_info, "Finish Time")
+                        launch_time, neg_launch = _extract_nonneg_number(task_info, "Launch Time")
+                        finish_time, neg_finish = _extract_nonneg_number(task_info, "Finish Time")
+                        if neg_launch is not None:
+                            has_corrupted_metrics = True
+                            corrupted_metrics.add("task_p95_seconds")
+                            warnings.append(
+                                f"Line {line_no}: negative task Launch Time={neg_launch[1]} ignored"
+                            )
+                        if neg_finish is not None:
+                            has_corrupted_metrics = True
+                            corrupted_metrics.add("task_p95_seconds")
+                            warnings.append(
+                                f"Line {line_no}: negative task Finish Time={neg_finish[1]} ignored"
+                            )
                         if (
-                            launch_time is not None
+                            neg_launch is None
+                            and neg_finish is None
+                            and launch_time is not None
                             and finish_time is not None
                             and finish_time >= launch_time
                         ):
@@ -245,26 +317,38 @@ class SparkEventLogParser:
                     task_metrics = event.get("Task Metrics")
                     if isinstance(task_metrics, dict) and task_metrics:
                         has_any_task_metrics = True
+
+                        def _take_nonneg(container: dict[str, Any], metric_name: str, *keys: str) -> int | float | None:
+                            nonlocal has_corrupted_metrics
+                            val, neg = _extract_nonneg_number(container, *keys)
+                            if neg is not None:
+                                has_corrupted_metrics = True
+                                corrupted_metrics.add(metric_name)
+                                warnings.append(
+                                    f"Line {line_no}: negative metric '{neg[0]}'={neg[1]} ignored"
+                                )
+                            return val
+
                         gc_time_ms_total = _add_opt_float(
-                            gc_time_ms_total, _first_number(task_metrics, "JVM GC Time")
+                            gc_time_ms_total, _take_nonneg(task_metrics, "gc_seconds", "JVM GC Time")
                         )
                         spill_disk_bytes_total = _add_opt_int(
-                            spill_disk_bytes_total, _first_number(task_metrics, "Disk Bytes Spilled")
+                            spill_disk_bytes_total, _take_nonneg(task_metrics, "spill_disk_bytes", "Disk Bytes Spilled")
                         )
                         spill_mem_bytes_total = _add_opt_int(
-                            spill_mem_bytes_total, _first_number(task_metrics, "Memory Bytes Spilled")
+                            spill_mem_bytes_total, _take_nonneg(task_metrics, "spill_memory_bytes", "Memory Bytes Spilled")
                         )
 
                         in_metrics = task_metrics.get("Input Metrics")
                         if isinstance(in_metrics, dict):
                             bytes_read_total = _add_opt_int(
-                                bytes_read_total, _first_number(in_metrics, "Bytes Read")
+                                bytes_read_total, _take_nonneg(in_metrics, "bytes_read", "Bytes Read")
                             )
 
                         out_metrics = task_metrics.get("Output Metrics")
                         if isinstance(out_metrics, dict):
                             bytes_written_total = _add_opt_int(
-                                bytes_written_total, _first_number(out_metrics, "Bytes Written")
+                                bytes_written_total, _take_nonneg(out_metrics, "bytes_written", "Bytes Written")
                             )
 
                         shuf_read = task_metrics.get("Shuffle Read Metrics")
@@ -274,14 +358,14 @@ class SparkEventLogParser:
                                 or "Merged Fetch Fallback Count" in shuf_read
                             ):
                                 saw_3x_marker = True
-                            total_read = _first_number(shuf_read, "Total Bytes Read")
-                            if total_read is not None:
+                            if "Total Bytes Read" in shuf_read:
+                                total_read = _take_nonneg(shuf_read, "shuffle_read_bytes", "Total Bytes Read")
                                 shuffle_read_bytes_total = _add_opt_int(
                                     shuffle_read_bytes_total, total_read
                                 )
                             else:
-                                remote_read = _first_number(shuf_read, "Remote Bytes Read")
-                                local_read = _first_number(shuf_read, "Local Bytes Read")
+                                remote_read = _take_nonneg(shuf_read, "shuffle_read_bytes", "Remote Bytes Read")
+                                local_read = _take_nonneg(shuf_read, "shuffle_read_bytes", "Local Bytes Read")
                                 if remote_read is not None or local_read is not None:
                                     saw_2x_marker = True
                                     shuffle_read_bytes_total = _add_opt_int(
@@ -291,13 +375,13 @@ class SparkEventLogParser:
 
                         shuf_write = task_metrics.get("Shuffle Write Metrics")
                         if isinstance(shuf_write, dict):
-                            sw = _first_number(shuf_write, "Shuffle Bytes Written")
-                            if sw is not None:
+                            if "Shuffle Bytes Written" in shuf_write:
+                                sw = _take_nonneg(shuf_write, "shuffle_write_bytes", "Shuffle Bytes Written")
                                 shuffle_write_bytes_total = _add_opt_int(
                                     shuffle_write_bytes_total, sw
                                 )
                             else:
-                                legacy_sw = _first_number(shuf_write, "Bytes Written")
+                                legacy_sw = _take_nonneg(shuf_write, "shuffle_write_bytes", "Bytes Written")
                                 if legacy_sw is not None:
                                     saw_2x_marker = True
                                     shuffle_write_bytes_total = _add_opt_int(
@@ -369,6 +453,8 @@ class SparkEventLogParser:
                 lifecycle -= 0.20
             if tasks_ended > 0 and not has_any_task_metrics:
                 lifecycle -= 0.10
+            if has_corrupted_metrics:
+                lifecycle -= 0.20
             lifecycle = max(0.0, lifecycle)
             completeness_score = round(
                 max(0.0, min(1.0, valid_ratio * recognized_ratio * lifecycle)), 4
@@ -380,6 +466,7 @@ class SparkEventLogParser:
             and not truncated
             and not missing_app_start
             and not missing_app_end
+            and not has_corrupted_metrics
             and duration_seconds is not None
         )
 
@@ -405,6 +492,16 @@ class SparkEventLogParser:
             warnings=tuple(dict.fromkeys(warnings)),
         )
 
+        source_name = f"spark_event_log:{path.name}"
+        metric_values = {
+            name: MetricValue.invalid(
+                unit=CANONICAL_UNITS.get(name, ""),
+                source=source_name,
+                quality="corrupted",
+            )
+            for name in sorted(corrupted_metrics)
+        }
+
         metrics = Metrics(
             duration_seconds=duration_seconds,
             cost_usd=cost_usd,
@@ -421,8 +518,9 @@ class SparkEventLogParser:
             bytes_written=bytes_written_total,
             shuffle_read_bytes=shuffle_read_bytes_total,
             spill_memory_bytes=spill_mem_bytes_total,
-            source=f"spark_event_log:{path.name}",
+            source=source_name,
             quality="complete" if is_complete else "incomplete",
+            metric_values=metric_values,
             parse_diagnostics=diagnostics,
         )
         return metrics, diagnostics

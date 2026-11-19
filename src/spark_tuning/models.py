@@ -231,11 +231,22 @@ class Metrics:
             coerced_mv: dict[str, MetricValue] = {}
             for key, item in self.metric_values.items():
                 if isinstance(item, MetricValue):
-                    coerced_mv[key] = item
+                    mv = item
                 elif isinstance(item, Mapping):
-                    coerced_mv[key] = MetricValue(**dict(item))
+                    mv = MetricValue(**dict(item))
                 else:
                     raise ValueError(f"Metrics.metric_values[{key!r}] must be MetricValue or mapping")
+                if key in _NUMERIC_METRIC_FIELDS:
+                    if mv.status is MetricStatus.OK and mv.value is not None and float(mv.value) < 0.0:
+                        raise ValueError(
+                            f"Metrics.metric_values[{key!r}] must be non-negative, got {mv.value!r}"
+                        )
+                elif key == "correctness":
+                    if mv.status is MetricStatus.OK and mv.value not in (0, 1):
+                        raise ValueError(
+                            f"Metrics.metric_values['correctness'] must be 0 or 1 when status is OK, got {mv.value!r}"
+                        )
+                coerced_mv[key] = mv
             object.__setattr__(self, "metric_values", coerced_mv)
 
         if isinstance(self.parse_diagnostics, Mapping):
@@ -315,7 +326,12 @@ class Metrics:
                 errors.append(f"baseline metric '{field_name}' has invalid status")
             if cm.status is MetricStatus.INVALID:
                 errors.append(f"candidate metric '{field_name}' has invalid status")
-            if bm.unit and cm.unit and bm.unit != cm.unit:
+            if field_name in CANONICAL_UNITS or field_name == "correctness":
+                if bm.unit != cm.unit:
+                    errors.append(f"unit mismatch for '{field_name}': {bm.unit!r} != {cm.unit!r}")
+                elif not bm.unit:
+                    errors.append(f"missing unit for canonical metric '{field_name}'")
+            elif (bm.is_usable or bm.unit) and (cm.is_usable or cm.unit) and bm.unit != cm.unit:
                 errors.append(f"unit mismatch for '{field_name}': {bm.unit!r} != {cm.unit!r}")
 
         return errors
@@ -336,6 +352,10 @@ class RunSpec:
     max_p95_regression: float = 0.20
     max_spill_regression: float = 0.20
     hypotheses: tuple[dict[str, Any], ...] = ()
+
+    def __post_init__(self) -> None:
+        if isinstance(self.max_iterations, bool) or not isinstance(self.max_iterations, int) or self.max_iterations < 0:
+            raise ValueError(f"RunSpec.max_iterations must be a non-negative int, got {self.max_iterations!r}")
 
 
 @dataclass
