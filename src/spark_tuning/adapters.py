@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any
 
 from .models import CANONICAL_UNITS, Metrics, MetricValue, ParseDiagnostics, RunSpec
+from .safety.sandbox import SandboxPolicy, SandboxViolationError
+from .safety.sanitizer import ArtifactSanitizer
 
 
 class JsonArtifactStore:
@@ -22,8 +24,12 @@ class JsonArtifactStore:
         self.directory.mkdir(parents=True, exist_ok=True)
 
     def save(self, run_id: str, payload: dict) -> None:
+        sanitized_payload, _ = ArtifactSanitizer.sanitize_with_report(payload)
         target = self.directory / f"{run_id}.json"
-        target.write_text(json.dumps(payload, indent=2, default=str) + "\n")
+        target.write_text(
+            json.dumps(sanitized_payload, indent=2, default=str) + "\n",
+            encoding="utf-8",
+        )
 
 
 def _first_number(mapping: Any, *keys: str) -> int | float | None:
@@ -552,11 +558,13 @@ class SparkSubmitExperimentRunner:
         spark_home: str | None = None,
         artifacts_dir: str | Path = "./artifacts",
         cost_per_second: float = 0.0,
+        sandbox_policy: SandboxPolicy | None = None,
     ):
         self.spark_home = spark_home or os.environ.get("SPARK_HOME")
         self.artifacts_dir = Path(artifacts_dir)
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
         self.cost_per_second = cost_per_second
+        self.sandbox_policy = sandbox_policy if sandbox_policy is not None else SandboxPolicy()
 
     def _resolve_spark_submit(self) -> str:
         if self.spark_home:
@@ -583,71 +591,128 @@ class SparkSubmitExperimentRunner:
             return None
 
     def run(self, spec: RunSpec, iteration: int, hypothesis: dict) -> Metrics:
-        hypothesis_id = hypothesis.get("id", f"iter_{iteration}")
-        run_artifacts_dir = self.artifacts_dir / spec.run_id / hypothesis_id
+        submission = self.sandbox_policy.validate_run(
+            spec=spec,
+            iteration=iteration,
+            hypothesis=hypothesis,
+        )
+
+        artifacts_root = self.artifacts_dir.resolve()
+        run_artifacts_dir = (artifacts_root / submission.run_id / submission.hypothesis_id).resolve()
+        if not run_artifacts_dir.is_relative_to(artifacts_root):
+            raise SandboxViolationError(
+                "PATH_TRAVERSAL",
+                "artifacts_dir",
+                "Artifact directory escapes configured artifacts_dir",
+            )
+
+        spark_submit_bin = self._resolve_spark_submit()
+
         run_artifacts_dir.mkdir(parents=True, exist_ok=True)
         event_log_dir = run_artifacts_dir / "event_logs"
         event_log_dir.mkdir(parents=True, exist_ok=True)
 
-        app_resource = hypothesis.get("app_resource") or hypothesis.get("script")
-        if not app_resource:
-            raise ValueError(f"Hypothesis {hypothesis_id} requires 'app_resource' or 'script'")
-
-        spark_submit_bin = self._resolve_spark_submit()
-        master = hypothesis.get("master", "local[*]")
-        deploy_mode = hypothesis.get("deploy_mode", "client")
-
-        cmd = [spark_submit_bin, "--master", master, "--deploy-mode", deploy_mode]
-
-        # Enforce event logging
-        spark_conf = dict(hypothesis.get("spark_conf", {}))
+        # Enforce event logging on top of validated spark_conf
+        spark_conf = dict(submission.spark_conf)
         spark_conf["spark.eventLog.enabled"] = "true"
         spark_conf["spark.eventLog.dir"] = str(event_log_dir.resolve())
 
+        cmd = [
+            spark_submit_bin,
+            "--master",
+            submission.master,
+            "--deploy-mode",
+            submission.deploy_mode,
+        ]
         for k, v in spark_conf.items():
             cmd.extend(["--conf", f"{k}={v}"])
 
-        main_class = hypothesis.get("main_class")
-        if main_class:
-            cmd.extend(["--class", main_class])
+        if submission.main_class:
+            cmd.extend(["--class", submission.main_class])
 
-        cmd.append(str(app_resource))
-        app_args = hypothesis.get("app_args", [])
-        cmd.extend([str(a) for a in app_args])
+        cmd.append(submission.app_resource)
+        cmd.extend(submission.app_args)
 
-        env = os.environ.copy()
-        env.update(hypothesis.get("env", {}))
-        env["SPARK_RUN_ID"] = spec.run_id
-
-        # Record command execution metadata artifact
-        run_metadata = {
-            "run_id": spec.run_id,
-            "iteration": iteration,
-            "hypothesis_id": hypothesis_id,
+        # Record sanitized command execution metadata artifact
+        raw_metadata = {
+            "run_id": submission.run_id,
+            "iteration": submission.iteration,
+            "hypothesis_id": submission.hypothesis_id,
             "command": cmd,
-            "environment": hypothesis.get("env", {}),
+            "spark_conf": spark_conf,
+            "environment": submission.sanitized_env,
+            "limits": submission.limits,
             "git_commit": self._get_git_commit(),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        (run_artifacts_dir / "run_metadata.json").write_text(json.dumps(run_metadata, indent=2))
-
-        timeout = hypothesis.get("timeout_seconds")
-        process = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=timeout,
-            check=False,
+        sanitized_metadata, meta_report = ArtifactSanitizer.sanitize_with_report(raw_metadata)
+        sanitized_metadata["redaction_report"] = {
+            "total_redactions": meta_report.total_redactions,
+            "redacted_paths": list(meta_report.redacted_paths),
+            "categories": dict(meta_report.categories),
+        }
+        (run_artifacts_dir / "run_metadata.json").write_text(
+            json.dumps(sanitized_metadata, indent=2, default=str) + "\n",
+            encoding="utf-8",
         )
 
-        # Save stdout/stderr output
-        (run_artifacts_dir / "stdout.log").write_text(process.stdout)
-        (run_artifacts_dir / "stderr.log").write_text(process.stderr)
+        preexec_fn = None
+        if os.name == "posix":
+            cpu_limit = max(1, int(math.ceil(submission.timeout_seconds)) + 2)
+            fsize_limit = int(submission.limits["max_disk_mb"]) * 1024 * 1024
+
+            def _apply_limits() -> None:
+                try:
+                    import resource
+
+                    resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit, cpu_limit))
+                    resource.setrlimit(resource.RLIMIT_FSIZE, (fsize_limit, fsize_limit))
+                except (ImportError, ValueError, OSError):
+                    pass
+
+            preexec_fn = _apply_limits
+
+        try:
+            process = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                env=submission.env,
+                timeout=submission.timeout_seconds,
+                shell=False,
+                preexec_fn=preexec_fn,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            partial_out = (
+                exc.stdout.decode("utf-8", errors="replace")
+                if isinstance(exc.stdout, bytes)
+                else (exc.stdout or "")
+            )
+            partial_err = (
+                exc.stderr.decode("utf-8", errors="replace")
+                if isinstance(exc.stderr, bytes)
+                else (exc.stderr or "")
+            )
+            (run_artifacts_dir / "stdout.log").write_text(
+                ArtifactSanitizer.sanitize_text(partial_out),
+                encoding="utf-8",
+            )
+            (run_artifacts_dir / "stderr.log").write_text(
+                ArtifactSanitizer.sanitize_text(partial_err),
+                encoding="utf-8",
+            )
+            raise
+
+        # Save sanitized stdout/stderr output
+        sanitized_stdout = ArtifactSanitizer.sanitize_text(process.stdout or "")
+        sanitized_stderr = ArtifactSanitizer.sanitize_text(process.stderr or "")
+        (run_artifacts_dir / "stdout.log").write_text(sanitized_stdout, encoding="utf-8")
+        (run_artifacts_dir / "stderr.log").write_text(sanitized_stderr, encoding="utf-8")
 
         if process.returncode != 0:
             raise RuntimeError(
-                f"spark-submit failed with code {process.returncode}:\n{process.stderr[-1000:]}"
+                f"spark-submit failed with code {process.returncode}:\n{sanitized_stderr[-1000:]}"
             )
 
         # Look for event log
