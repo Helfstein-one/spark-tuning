@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -29,6 +30,25 @@ class DataQualityReport:
     reason: str = ""
 
 
+def _is_missing(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    if isinstance(value, (dict, list, tuple, set)) and len(value) == 0:
+        return True
+    return False
+
+
+def _is_valid_row_count(value: Any) -> bool:
+    if value is None or isinstance(value, bool):
+        return False
+    if not isinstance(value, (int, float)):
+        return False
+    fval = float(value)
+    return math.isfinite(fval) and fval >= 0.0
+
+
 class DataQualityGate:
     """Verifies schema, row count, checksum, NULLs and completeness."""
 
@@ -37,6 +57,9 @@ class DataQualityGate:
         cls,
         baseline_meta: dict[str, Any],
         candidate_meta: dict[str, Any],
+        *,
+        require_checksum: bool = True,
+        require_schema: bool = False,
     ) -> DataQualityReport:
         checks: list[QualityCheckResult] = []
 
@@ -51,6 +74,16 @@ class DataQualityGate:
                     expected=base_rows,
                     observed=cand_rows,
                     details="Missing row count evidence",
+                )
+            )
+        elif not _is_valid_row_count(base_rows) or not _is_valid_row_count(cand_rows):
+            checks.append(
+                QualityCheckResult(
+                    check_name="row_count",
+                    status=QualityCheckStatus.FAILED,
+                    expected=base_rows,
+                    observed=cand_rows,
+                    details=f"Invalid row count evidence: expected {base_rows!r}, got {cand_rows!r}",
                 )
             )
         elif base_rows != cand_rows:
@@ -76,50 +109,74 @@ class DataQualityGate:
         # 2. Checksum / hash verification
         base_hash = baseline_meta.get("checksum")
         cand_hash = candidate_meta.get("checksum")
-        if base_hash and cand_hash:
-            if base_hash != cand_hash:
+        base_hash_missing = _is_missing(base_hash)
+        cand_hash_missing = _is_missing(cand_hash)
+        if base_hash_missing or cand_hash_missing:
+            if require_checksum or (base_hash_missing != cand_hash_missing):
                 checks.append(
                     QualityCheckResult(
                         check_name="checksum",
-                        status=QualityCheckStatus.FAILED,
+                        status=QualityCheckStatus.UNKNOWN,
                         expected=base_hash,
                         observed=cand_hash,
-                        details="Checksum mismatch between baseline and candidate outputs",
+                        details="Missing checksum evidence",
                     )
                 )
-            else:
-                checks.append(
-                    QualityCheckResult(
-                        check_name="checksum",
-                        status=QualityCheckStatus.PASSED,
-                        expected=base_hash,
-                        observed=cand_hash,
-                    )
+        elif base_hash != cand_hash:
+            checks.append(
+                QualityCheckResult(
+                    check_name="checksum",
+                    status=QualityCheckStatus.FAILED,
+                    expected=base_hash,
+                    observed=cand_hash,
+                    details="Checksum mismatch between baseline and candidate outputs",
                 )
+            )
+        else:
+            checks.append(
+                QualityCheckResult(
+                    check_name="checksum",
+                    status=QualityCheckStatus.PASSED,
+                    expected=base_hash,
+                    observed=cand_hash,
+                )
+            )
 
         # 3. Schema match
         base_schema = baseline_meta.get("schema")
         cand_schema = candidate_meta.get("schema")
-        if base_schema and cand_schema:
-            if base_schema != cand_schema:
+        base_schema_missing = _is_missing(base_schema)
+        cand_schema_missing = _is_missing(cand_schema)
+        if base_schema_missing or cand_schema_missing:
+            if require_schema or (base_schema_missing != cand_schema_missing):
                 checks.append(
                     QualityCheckResult(
                         check_name="schema",
-                        status=QualityCheckStatus.FAILED,
+                        status=QualityCheckStatus.UNKNOWN,
                         expected=base_schema,
                         observed=cand_schema,
-                        details="Schema definition altered by optimization candidate",
+                        details="Missing schema evidence",
                     )
                 )
-            else:
-                checks.append(
-                    QualityCheckResult(
-                        check_name="schema",
-                        status=QualityCheckStatus.PASSED,
-                        expected=base_schema,
-                        observed=cand_schema,
-                    )
+        elif base_schema != cand_schema:
+            checks.append(
+                QualityCheckResult(
+                    check_name="schema",
+                    status=QualityCheckStatus.FAILED,
+                    expected=base_schema,
+                    observed=cand_schema,
+                    details="Schema definition altered by optimization candidate",
                 )
+            )
+        else:
+            checks.append(
+                QualityCheckResult(
+                    check_name="schema",
+                    status=QualityCheckStatus.PASSED,
+                    expected=base_schema,
+                    observed=cand_schema,
+                )
+            )
 
         # Overall decision
         has_failure = any(c.status == QualityCheckStatus.FAILED for c in checks)

@@ -1,0 +1,6 @@
+{"Event":"SparkListenerLogStart","Spark Version":"3.5.1"}
+{"Event":"SparkListenerApplicationStart","App Name":"Spark3TruncatedJob","App ID":"app-20261118-0099","Timestamp":1700000000000,"User":"spark"}
+CORRUPT_RAW_LOG_LINE_NOT_JSON
+{bad_json_missing_quotes: true}
+{"Event":"SparkListenerTaskEnd","Stage ID":0,"Stage Attempt ID":0,"Task Type":"ResultTask","Task End Reason":{"Reason":"Success"},"Task Info":{"Task ID":0,"Index":0,"Attempt":0,"Launch Time":1700000001000,"Finish Time":1700000005000,"Failed":false}}
+{"Event":"SparkListenerApplicationEnd","Timestamp":1700000

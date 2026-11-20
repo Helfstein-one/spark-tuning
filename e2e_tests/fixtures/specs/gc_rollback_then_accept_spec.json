@@ -1,0 +1,64 @@
+{
+  "run_id": "e2e-gc-rollback-accept",
+  "skill": "jvm-gc-memory",
+  "objective": "Reduce JVM GC thrashing without correctness failure or p95 regression",
+  "baseline": {
+    "duration_seconds": 290.0,
+    "cost_usd": 14.5,
+    "shuffle_write_bytes": 4000000000,
+    "spill_disk_bytes": 0,
+    "gc_seconds": 120.0,
+    "task_p95_seconds": 60.0,
+    "tasks_count": 120,
+    "failures": 0,
+    "correctness": true
+  },
+  "max_iterations": 4,
+  "max_total_cost_usd": 50.0,
+  "min_duration_improvement": 0.10,
+  "min_cost_improvement": 0.10,
+  "max_p95_regression": 0.20,
+  "max_spill_regression": 0.20,
+  "hypotheses": [
+    {
+      "id": "aggressive-offheap",
+      "target_category": "memory_gc",
+      "description": "Disable heap safety margin with aggressive off-heap unsafe pooling",
+      "expected_impact": 0.95,
+      "confidence": 0.95,
+      "reversibility": 0.95,
+      "risk": 0.05,
+      "estimated_cost_usd": 5.0,
+      "metrics": {
+        "duration_seconds": 240.0,
+        "cost_usd": 12.0,
+        "shuffle_write_bytes": 3800000000,
+        "spill_disk_bytes": 0,
+        "gc_seconds": 40.0,
+        "task_p95_seconds": 55.0,
+        "failures": 0,
+        "correctness": false
+      }
+    },
+    {
+      "id": "kryo-and-g1gc",
+      "target_category": "memory_gc",
+      "description": "Switch to KryoSerializer and tune G1GC InitiatingHeapOccupancyPercent",
+      "expected_impact": 0.75,
+      "confidence": 0.85,
+      "reversibility": 0.90,
+      "risk": 0.15,
+      "estimated_cost_usd": 10.0,
+      "metrics": {
+        "duration_seconds": 200.0,
+        "cost_usd": 10.0,
+        "shuffle_write_bytes": 3200000000,
+        "spill_disk_bytes": 0,
+        "gc_seconds": 25.0,
+        "task_p95_seconds": 65.0,
+        "failures": 0,
+        "correctness": true
+      }
+    }
+  ]
+}

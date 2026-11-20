@@ -1,0 +1,56 @@
+{
+  "run_id": "e2e-skew-join-tuning",
+  "skill": "partition-sizing",
+  "objective": "Eliminate skew spill and reduce duration by >=30% without regressions",
+  "baseline": {
+    "duration_seconds": 340.0,
+    "cost_usd": 17.0,
+    "shuffle_write_bytes": 12884901888,
+    "spill_disk_bytes": 23622320128,
+    "gc_seconds": 18.0,
+    "task_p95_seconds": 180.0,
+    "tasks_count": 200,
+    "failures": 0,
+    "correctness": true
+  },
+  "max_iterations": 4,
+  "max_total_cost_usd": 60.0,
+  "min_duration_improvement": 0.10,
+  "min_cost_improvement": 0.10,
+  "max_p95_regression": 0.20,
+  "max_spill_regression": 0.20,
+  "hypotheses": [
+    {
+      "id": "cosmetic-log-level",
+      "target_category": "driver",
+      "description": "Reduce driver log verbosity only",
+      "expected_impact": 0.05,
+      "confidence": 0.30,
+      "reversibility": 0.90,
+      "risk": 0.40,
+      "estimated_cost_usd": 16.5,
+      "metrics": {
+        "duration_seconds": 333.0,
+        "cost_usd": 16.5,
+        "shuffle_write_bytes": 12884901888,
+        "spill_disk_bytes": 23622320128,
+        "gc_seconds": 17.8,
+        "task_p95_seconds": 179.0,
+        "tasks_count": 200,
+        "failures": 0,
+        "correctness": true
+      }
+    },
+    {
+      "id": "skew-join-hint",
+      "target_category": "spill",
+      "description": "Enable AQE skewJoin and increase shuffle partitions to eliminate 22GiB disk spill",
+      "expected_impact": 0.90,
+      "confidence": 0.90,
+      "reversibility": 0.95,
+      "risk": 0.10,
+      "estimated_cost_usd": 8.0,
+      "event_log": "e2e_tests/fixtures/event_logs/spark3_complete.jsonl"
+    }
+  ]
+}

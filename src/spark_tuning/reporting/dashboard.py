@@ -18,25 +18,33 @@ class InteractiveDashboardGenerator:
         baseline: Metrics,
         output_path: Path | str | None = None,
     ) -> str:
-        # Prepare data for Chart.js
+        # Prepare data for Chart.js (keep missing telemetry as null, never coerce None -> 0)
         iterations_labels = ["Baseline (0)"]
-        durations = [baseline.duration_seconds]
-        costs = [baseline.cost_usd]
-        spills = [round((baseline.spill_disk_bytes or 0) / (1024 * 1024), 2)]
-        gcs = [baseline.gc_seconds or 0.0]
+        durations: list[float | None] = [baseline.duration_seconds]
+        costs: list[float | None] = [baseline.cost_usd]
+        spills: list[float | None] = [
+            round(baseline.spill_disk_bytes / (1024 * 1024), 2)
+            if baseline.spill_disk_bytes is not None
+            else None
+        ]
+        gcs: list[float | None] = [baseline.gc_seconds]
 
         for it in result.iterations:
             iterations_labels.append(f"It {it.number}: {it.hypothesis}")
             if it.metrics:
                 durations.append(it.metrics.duration_seconds)
                 costs.append(it.metrics.cost_usd)
-                spills.append(round((it.metrics.spill_disk_bytes or 0) / (1024 * 1024), 2))
-                gcs.append(it.metrics.gc_seconds or 0.0)
+                spills.append(
+                    round(it.metrics.spill_disk_bytes / (1024 * 1024), 2)
+                    if it.metrics.spill_disk_bytes is not None
+                    else None
+                )
+                gcs.append(it.metrics.gc_seconds)
             else:
-                durations.append(0)
-                costs.append(0)
-                spills.append(0)
-                gcs.append(0)
+                durations.append(None)
+                costs.append(None)
+                spills.append(None)
+                gcs.append(None)
 
         # Build self-contained HTML
         html = f"""<!DOCTYPE html>
@@ -151,20 +159,24 @@ class InteractiveDashboardGenerator:
         <tr>
           <td>0 (Baseline)</td>
           <td>Baseline Inicial</td>
-          <td>{baseline.duration_seconds}s</td>
-          <td>${baseline.cost_usd}</td>
-          <td>{round((baseline.spill_disk_bytes or 0)/(1024*1024), 2)} MB</td>
-          <td>{baseline.gc_seconds or 0.0}s</td>
+          <td>{f"{baseline.duration_seconds}s" if baseline.duration_seconds is not None else "unknown"}</td>
+          <td>{f"${baseline.cost_usd}" if baseline.cost_usd is not None else "unknown"}</td>
+          <td>{f"{round(baseline.spill_disk_bytes/(1024*1024), 2)} MB" if baseline.spill_disk_bytes is not None else "unknown"}</td>
+          <td>{f"{baseline.gc_seconds}s" if baseline.gc_seconds is not None else "unknown"}</td>
           <td>BASELINE</td>
           <td>Referência</td>
         </tr>
 """
         for it in result.iterations:
             m = it.metrics
-            dur = f"{m.duration_seconds}s" if m else "-"
-            c = f"${m.cost_usd}" if m else "-"
-            sp = f"{round((m.spill_disk_bytes or 0)/(1024*1024), 2)} MB" if m else "-"
-            gc = f"{m.gc_seconds}s" if m else "-"
+            dur = (f"{m.duration_seconds}s" if m.duration_seconds is not None else "unknown") if m else "-"
+            c = (f"${m.cost_usd}" if m.cost_usd is not None else "unknown") if m else "-"
+            sp = (
+                f"{round(m.spill_disk_bytes/(1024*1024), 2)} MB"
+                if m.spill_disk_bytes is not None
+                else "unknown"
+            ) if m else "-"
+            gc = (f"{m.gc_seconds}s" if m.gc_seconds is not None else "unknown") if m else "-"
             dec = it.decision.value if it.decision else "-"
             html += f"""
         <tr>

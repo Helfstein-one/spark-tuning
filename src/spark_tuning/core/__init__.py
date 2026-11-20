@@ -5,6 +5,9 @@ from spark_tuning.models import (
     Iteration,
     LoopResult,
     Metrics,
+    MetricStatus,
+    MetricValue,
+    ParseDiagnostics,
     RunSpec,
     RunState,
 )
@@ -16,7 +19,10 @@ __all__ = [
     "ExperimentRunner",
     "Iteration",
     "LoopResult",
+    "MetricStatus",
+    "MetricValue",
     "Metrics",
+    "ParseDiagnostics",
     "RunSpec",
     "RunState",
 ]

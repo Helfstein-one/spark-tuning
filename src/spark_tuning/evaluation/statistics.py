@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import statistics
 from dataclasses import dataclass, field
 from enum import Enum
@@ -18,12 +19,12 @@ class BenchmarkOutcome(str, Enum):
 class StatisticalSummary:
     metric_name: str
     sample_count: int
-    mean: float
-    median: float
-    p95: float
-    stdev: float
-    min_val: float
-    max_val: float
+    mean: float | None
+    median: float | None
+    p95: float | None
+    stdev: float | None
+    min_val: float | None
+    max_val: float | None
 
 
 @dataclass
@@ -40,10 +41,26 @@ class StatisticalBenchmarkComparator:
     """Compares repetitions of baseline vs candidate runs to eliminate noisy decisions."""
 
     @classmethod
-    def summarize(cls, metric_name: str, values: list[float]) -> StatisticalSummary:
+    def summarize(cls, metric_name: str, values: list[float | int | None]) -> StatisticalSummary:
         if not values:
             raise ValueError("Cannot summarize empty values list")
-        sorted_vals = sorted(values)
+        valid_vals = [
+            float(v)
+            for v in values
+            if v is not None and not isinstance(v, bool) and math.isfinite(float(v))
+        ]
+        if not valid_vals:
+            return StatisticalSummary(
+                metric_name=metric_name,
+                sample_count=0,
+                mean=None,
+                median=None,
+                p95=None,
+                stdev=None,
+                min_val=None,
+                max_val=None,
+            )
+        sorted_vals = sorted(valid_vals)
         n = len(sorted_vals)
         p95_idx = int(0.95 * (n - 1))
         stdev = statistics.stdev(sorted_vals) if n > 1 else 0.0
@@ -66,11 +83,37 @@ class StatisticalBenchmarkComparator:
         candidate_runs: list[Metrics],
         min_improvement: float = 0.10,
     ) -> BenchmarkComparison:
-        base_durations = [m.duration_seconds for m in baseline_runs]
-        cand_durations = [m.duration_seconds for m in candidate_runs]
+        if not baseline_runs or not candidate_runs:
+            raise ValueError("Baseline and candidate runs must contain at least one metric execution.")
+
+        def _extract_duration(m: Metrics) -> float | None:
+            mv = m.get_metric("duration_seconds") if hasattr(m, "get_metric") else None
+            if mv is not None:
+                return float(mv.value) if mv.is_usable else None
+            val = m.duration_seconds
+            if val is None or isinstance(val, bool):
+                return None
+            fval = float(val)
+            return fval if math.isfinite(fval) else None
+
+        base_durations = [_extract_duration(m) for m in baseline_runs]
+        cand_durations = [_extract_duration(m) for m in candidate_runs]
 
         base_sum = cls.summarize("duration_seconds", base_durations)
         cand_sum = cls.summarize("duration_seconds", cand_durations)
+
+        if any(d is None for d in base_durations) or any(d is None for d in cand_durations):
+            return BenchmarkComparison(
+                outcome=BenchmarkOutcome.INCONCLUSIVE,
+                improvement_ratio=0.0,
+                statistically_significant=False,
+                baseline_summary=base_sum,
+                candidate_summary=cand_sum,
+                reason="Missing or non-finite duration_seconds in benchmark runs. Inconclusive.",
+            )
+
+        assert base_sum.median is not None and cand_sum.median is not None
+        assert cand_sum.stdev is not None and cand_sum.mean is not None
 
         if base_sum.median == 0:
             improvement = 0.0

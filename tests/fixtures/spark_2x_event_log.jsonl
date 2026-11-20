@@ -1,0 +1,6 @@
+{"Event":"SparkListenerLogStart","Spark Version":"2.4.8"}
+{"Event":"SparkListenerApplicationStart","App Name":"LegacySpark2App","App ID":"app-2x-0001","Timestamp":1700000000000,"User":"spark"}
+{"Event":"SparkListenerStageSubmitted","Stage Info":{"Stage ID":0,"Stage Attempt ID":0,"Stage Name":"rdd-join","Number of Tasks":1,"Submission Time":1700000000500}}
+{"Event":"SparkListenerTaskEnd","Stage ID":0,"Stage Attempt ID":0,"Task Type":"ShuffleMapTask","Task End Reason":{"Reason":"Success"},"Task Info":{"Task ID":0,"Index":0,"Attempt":0,"Launch Time":1700000001000,"Finish Time":1700000003000,"Failed":false},"Task Metrics":{"Executor Run Time":2000,"JVM GC Time":40,"Memory Bytes Spilled":0,"Disk Bytes Spilled":0,"Input Metrics":{"Bytes Read":1024},"Output Metrics":{"Bytes Written":512},"Shuffle Read Metrics":{"Remote Bytes Read":400,"Local Bytes Read":300},"Shuffle Write Metrics":{"Bytes Written":900}}}
+{"Event":"SparkListenerStageCompleted","Stage Info":{"Stage ID":0,"Stage Attempt ID":0,"Stage Name":"rdd-join","Number of Tasks":1,"Submission Time":1700000000500,"Completion Time":1700000003500}}
+{"Event":"SparkListenerApplicationEnd","Timestamp":1700000004000}

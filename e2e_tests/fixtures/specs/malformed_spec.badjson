@@ -1,0 +1,9 @@
+{
+  "run_id": "broken-spec",
+  "skill": "partition-sizing",
+  "baseline": {
+    "duration_seconds": 100.0,
+    "cost_usd": 5.0
+  ,
+  "hypotheses": [
+    {"id": "unclosed-json"
