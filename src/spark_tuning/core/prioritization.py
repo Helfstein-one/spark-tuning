@@ -11,11 +11,12 @@ from spark_tuning.diagnostics.engine import BottleneckCategory, Diagnosis
 class HypothesisProposal:
     id: str
     target_category: BottleneckCategory
-    description: str
-    expected_impact: float  # 0.0 - 1.0
-    confidence: float       # 0.0 - 1.0
-    risk: float             # 0.0 - 1.0 (lower is better)
-    estimated_cost_usd: float
+    description: str = ""
+    expected_impact: float = 0.5  # 0.0 - 1.0
+    confidence: float = 0.5       # 0.0 - 1.0
+    reversibility: float = 0.9    # 0.0 - 1.0 (higher is better)
+    risk: float = 0.2             # 0.0 - 1.0 (lower is better)
+    estimated_cost_usd: float = 1.0
 
 
 @dataclass
@@ -43,8 +44,15 @@ class HypothesisPrioritizer:
             if p.id in rejected:
                 continue
 
-            # Base score formula: (Impact * Confidence) / (Risk + 0.1)
-            raw_score = (p.expected_impact * p.confidence) / (p.risk + 0.1)
+            # Numerator: impact * confidence * reversibility
+            # Denominator: cost * risk (guarded against <= 0 or division by zero)
+            impact = max(0.001, float(p.expected_impact))
+            confidence = max(0.001, float(p.confidence))
+            reversibility = max(0.001, float(p.reversibility))
+            risk = max(0.01, float(p.risk))
+            cost = max(0.01, float(p.estimated_cost_usd))
+
+            raw_score = (impact * confidence * reversibility) / (cost * risk)
 
             # Boost if hypothesis directly targets primary bottleneck cause
             if p.target_category == diagnosis.primary_cause:

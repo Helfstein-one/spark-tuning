@@ -1,0 +1,7 @@
+{"Event":"SparkListenerLogStart","Spark Version":"3.5.1"}
+{"Event":"SparkListenerApplicationStart","App Name":"Spark3NoTaskMetricsJob","App ID":"app-20261118-0055","Timestamp":1700000000000,"User":"spark"}
+{"Event":"SparkListenerStageSubmitted","Stage Info":{"Stage ID":0,"Stage Attempt ID":0,"Stage Name":"map at NoMetrics.py:10","Number of Tasks":2,"Submission Time":1700000001000}}
+{"Event":"SparkListenerTaskEnd","Stage ID":0,"Stage Attempt ID":0,"Task Type":"ResultTask","Task End Reason":{"Reason":"Success"},"Task Info":{"Task ID":0,"Index":0,"Attempt":0,"Launch Time":1700000001000,"Finish Time":1700000021000,"Failed":false}}
+{"Event":"SparkListenerTaskEnd","Stage ID":0,"Stage Attempt ID":0,"Task Type":"ResultTask","Task End Reason":{"Reason":"Success"},"Task Info":{"Task ID":1,"Index":1,"Attempt":0,"Launch Time":1700000021000,"Finish Time":1700000046000,"Failed":false}}
+{"Event":"SparkListenerStageCompleted","Stage Info":{"Stage ID":0,"Stage Attempt ID":0,"Stage Name":"map at NoMetrics.py:10","Number of Tasks":2,"Submission Time":1700000001000,"Completion Time":1700000048000}}
+{"Event":"SparkListenerApplicationEnd","Timestamp":1700000050000}

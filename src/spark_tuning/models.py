@@ -28,6 +28,17 @@ class Decision(str, Enum):
     BLOCKED = "blocked"
 
 
+class LoopPhase(str, Enum):
+    OBSERVE = "observe"
+    CLASSIFY = "classify"
+    HYPOTHESIZE = "hypothesize"
+    EXPERIMENT = "experiment"
+    MEASURE = "measure"
+    VERIFY = "verify"
+    DECIDE = "decide"
+    LEARN = "learn"
+
+
 class MetricStatus(str, Enum):
     OK = "ok"
     UNKNOWN = "unknown"
@@ -374,6 +385,14 @@ class LoopResult:
     decision: Decision
     iterations: list[Iteration] = field(default_factory=list)
     reason: str = ""
+    phases: list[LoopPhase] = field(default_factory=list)
+    phase_trace: list[LoopPhase] = field(default_factory=list)
+    discarded_hypotheses: dict[str, str] = field(default_factory=dict)
+    rejected_hypotheses: dict[str, str] = field(default_factory=dict)
+    discard_reasons: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        d["phases"] = [p.value if isinstance(p, LoopPhase) else p for p in self.phases]
+        d["phase_trace"] = [p.value if isinstance(p, LoopPhase) else p for p in self.phase_trace]
+        return d
